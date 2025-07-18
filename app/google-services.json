@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "447458623377",
+    "project_id": "mdlbapp",
+    "storage_bucket": "mdlbapp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:447458623377:android:c5b93c275531010fbf2430",
+        "android_client_info": {
+          "package_name": "com.yourname.mdlbapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "447458623377-1c7bis0u8tgctkjfvqs0j9is8uqr84ko.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.yourname.mdlbapp",
+            "certificate_hash": "8355bd2b5d8f098a7c659a8b67662578fb2ae69c"
+          }
+        },
+        {
+          "client_id": "447458623377-1q3tl6v3mejtuspevb2pbjns376dpr3a.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBbCgV0YY_yL5RJeDch6SE-3uZJ3NbIA4w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "447458623377-1q3tl6v3mejtuspevb2pbjns376dpr3a.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
