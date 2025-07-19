@@ -1439,14 +1439,17 @@ fun HabitsScreen(navController: NavController) {
     }
 
     val groupedHabits = habits
-        .sortedBy {
-            val rawDate = it["nextDueDate"] as? String
-            rawDate?.let { LocalDate.parse(it) } ?: LocalDate.MAX
+        .mapNotNull {
+            val dateStr = it["nextDueDate"] as? String ?: return@mapNotNull null
+            val date = try {
+                LocalDate.parse(dateStr)
+            } catch (e: Exception) {
+                null
+            } ?: return@mapNotNull null
+            date to it
         }
-        .groupBy {
-            val rawDate = it["nextDueDate"] as? String ?: ""
-            formatDateLabel(rawDate)
-        }
+        .groupBy({ it.first }, { it.second })
+        .toSortedMap()
 
     Column(
         modifier = Modifier
@@ -1505,7 +1508,9 @@ fun HabitsScreen(navController: NavController) {
                         .weight(1f),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    groupedHabits.forEach { (dateLabel, habitsForDate) ->
+                    groupedHabits.forEach { (date, habitsForDate) ->
+                        val dateLabel = formatDateLabel(date.toString())
+
                         item {
                             Text(
                                 text = dateLabel,
@@ -1520,6 +1525,7 @@ fun HabitsScreen(navController: NavController) {
                             MommyHabitCard(habit, navController)
                         }
                     }
+
                     item {
                         Spacer(modifier = Modifier.height(100.dp))
                     }
@@ -2245,26 +2251,27 @@ fun formatDateLabel(dateStr: String): String {
     val inputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     val today = LocalDate.now()
     val tomorrow = today.plusDays(1)
-    val endOfWeek = today.with(DayOfWeek.SUNDAY)
-
-    return try {
-        val date = LocalDate.parse(dateStr, inputFormatter)
-        when {
-            date == today -> "Сегодня"
-            date == tomorrow -> "Завтра"
-            date <= endOfWeek -> {
-                val dayOfWeek = date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale("ru"))
-                dayOfWeek.replaceFirstChar { it.uppercaseChar() } // Понедельник и т.п.
-            }
-            else -> {
-                val formatter = DateTimeFormatter.ofPattern("d MMMM", Locale("ru"))
-                date.format(formatter).replaceFirstChar { it.uppercaseChar() } // 24 июля
-            }
-        }
+    val date = try {
+        LocalDate.parse(dateStr, inputFormatter)
     } catch (e: Exception) {
-        dateStr
+        return dateStr
+    }
+
+    return when {
+        date == today -> "Сегодня"
+        date == tomorrow -> "Завтра"
+        date.isAfter(today.plusDays(1)) && date <= today.with(DayOfWeek.SUNDAY) -> {
+            // Только если внутри этой недели
+            val dayOfWeek = date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale("ru"))
+            dayOfWeek.replaceFirstChar { it.uppercaseChar() }
+        }
+        else -> {
+            val formatter = DateTimeFormatter.ofPattern("d MMMM", Locale("ru"))
+            date.format(formatter).replaceFirstChar { it.uppercaseChar() }
+        }
     }
 }
+
 
 
 
@@ -2296,6 +2303,21 @@ fun BabyHabitsScreen(navController: NavController) {
             }
     }
 
+    // 🔁 Группировка по дате nextDueDate
+    val groupedHabits = habits
+        .mapNotNull {
+            val dateStr = it["nextDueDate"] as? String ?: return@mapNotNull null
+            val date = try {
+                LocalDate.parse(dateStr)
+            } catch (e: Exception) {
+                null
+            } ?: return@mapNotNull null
+            date to it
+        }
+        .groupBy({ it.first }, { it.second }) // Группируем по LocalDate
+        .toSortedMap() // Сортируем по возрастанию даты
+
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -2326,13 +2348,28 @@ fun BabyHabitsScreen(navController: NavController) {
             )
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(habits) { habit ->
-                    BabyHabitCard(habit)
+                groupedHabits.forEach { (date, habitsForDate) ->
+                    val dateLabel = formatDateLabel(date.toString()) // форматируем надпись
+
+                    item {
+                        Text(
+                            text = dateLabel,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+
+                    items(habitsForDate) { habit ->
+                        BabyHabitCard(habit)
+                    }
                 }
             }
         }
     }
 }
+
 
 
 
