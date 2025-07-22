@@ -68,7 +68,7 @@ fun PairCodeScreenBaby(uid: String, navController: NavHostController) {
                     codeRef.delete()
                     // Навигация
                     navController.navigate(Screen.Baby.route) {
-                        popUpTo(0)
+                        popUpTo(Screen.RoleSelection.route) { inclusive = true }
                     }
                 } else {
                     Toast.makeText(context, "Код не найден", Toast.LENGTH_SHORT).show()

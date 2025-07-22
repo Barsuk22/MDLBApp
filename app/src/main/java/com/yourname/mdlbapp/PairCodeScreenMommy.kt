@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,34 +40,33 @@ fun PairCodeScreenMommy(uid: String, navController: NavHostController) {
     LaunchedEffect(Unit) {
         if (generatedCode == null) {
             val code = (100000..999999).random().toString()
-            val codeRef = db.collection("pairCodes").document(code)
-
-            codeRef.set(mapOf(
-                "mommyUid" to uid,
-                "createdAt" to System.currentTimeMillis()
-            )).addOnSuccessListener {
-                generatedCode = code
-            }.addOnFailureListener {
-                Toast.makeText(context, "Ошибка генерации кода", Toast.LENGTH_SHORT).show()
-            }
+            db.collection("pairCodes")
+                .document(code)
+                .set(mapOf(
+                    "mommyUid" to uid,
+                    "createdAt" to System.currentTimeMillis()
+                ))
+                .addOnSuccessListener { generatedCode = code }
+                .addOnFailureListener {
+                    Toast.makeText(context, "Ошибка генерации кода", Toast.LENGTH_SHORT).show()
+                }
         }
     }
 
-    // 🔄 Проверка — связался ли Малыш
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(3000) // каждые 3 секунды
-            db.collection("users").document(uid).get()
-                .addOnSuccessListener { doc ->
-                    val pairedWith = doc.getString("pairedWith")
-                    if (!pairedWith.isNullOrEmpty()) {
-                        navController.navigate(Screen.Mommy.route) {
-                            popUpTo(0) // очищаем стек навигации
-                        }
+    // Реактивный слушатель пары
+    DisposableEffect(uid) {
+        val registration = db.collection("users")
+            .document(uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) return@addSnapshotListener
+                val pairedWith = snapshot?.getString("pairedWith")
+                if (!pairedWith.isNullOrEmpty()) {
+                    navController.navigate(Screen.Mommy.route) {
+                        popUpTo(Screen.RoleSelection.route) { inclusive = true }
                     }
                 }
-            // delay в цикле — цикл не блокирует UI
-        }
+            }
+        onDispose { registration.remove() }
     }
 
     Column(

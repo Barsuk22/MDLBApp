@@ -60,6 +60,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -95,8 +96,10 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.google.android.play.integrity.internal.e
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.yourname.mdlbapp.ui.theme.MDLBAppTheme
@@ -153,9 +156,6 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable(Screen.RoleSelection.route) {
                             RoleSelectionScreen(navController)
-                        }
-                        composable(Screen.Mommy.route) {
-                            MommyScreen(navController)
                         }
                         composable(Screen.Baby.route) {
                             BabyScreen(navController)
@@ -919,6 +919,9 @@ fun CreateRuleScreen(
     val category = remember { mutableStateOf("Дисциплина") }
     val status = remember { mutableStateOf("Временно отключено") }
 
+    var isSaving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1109,9 +1112,19 @@ fun CreateRuleScreen(
 
         Spacer(modifier = Modifier.height(32.dp))
 
+        // Если идёт сохранение — показываем индикатор
+        if (isSaving) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
         // Кнопка
         Button(
             onClick = {
+                // Начали сохранение
+                isSaving = true
+                errorMessage = null
+
                 if (ruleName.value.isNotBlank() && ruleDetails.value.isNotBlank()) {
                     val newRule = hashMapOf(
                         "title" to ruleName.value,
@@ -1127,26 +1140,43 @@ fun CreateRuleScreen(
                     Firebase.firestore.collection("rules")
                         .add(newRule)
                         .addOnSuccessListener {
+                            isSaving = false
                             navController.popBackStack()
                         }
-                        .addOnFailureListener {
-                            // обработка ошибки (по желанию)
+                        .addOnFailureListener { e ->
+                            isSaving = false
+                            errorMessage = e.localizedMessage ?: "Ошибка при сохранении"
                         }
+                }else{
+                    isSaving = false
+                    errorMessage = "Название и описание обязательна вводить Мамотьке :)))"
                 }
             },
+
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFFF5D8CE)
             ),
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(12.dp),
+            enabled = !isSaving  // блокируем кнопку во время сохранения
         ) {
             Text(
-                text = "Сохранить правило",
+                text = if (isSaving) "Сохранение…" else "Сохранить правило",
                 fontSize = 18.sp,
                 color = Color(0xFF53291E),
                 fontWeight = FontWeight.SemiBold
+            )
+        }
+        // Если была ошибка — показываем сообщение
+        errorMessage?.let { msg ->
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = msg,
+                color = Color.Red,
+                fontStyle = FontStyle.Italic,
+                modifier = Modifier.padding(horizontal = 8.dp)
             )
         }
     }
@@ -1221,6 +1251,10 @@ fun EditRuleScreen(
     var reminder by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Дисциплина") }
     var status by remember { mutableStateOf("Временно отключено") }
+
+    // Новые состояния
+    var isSaving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(ruleId) {
         Firebase.firestore.collection("rules").document(ruleId).get()
@@ -1344,8 +1378,22 @@ fun EditRuleScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
+            // Индикатор во время сохранения
+            if (isSaving) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             Button(
                 onClick = {
+                    // валидация полей до isSaving
+                    if (title.isBlank() || details.isBlank()) {
+                        errorMessage = "Название и описание обязательны"
+                        return@Button
+                    }
+                    isSaving = true
+                    errorMessage = null
+
                     val updatedFields = mapOf(
                         "title" to title,
                         "description" to details,
@@ -1355,6 +1403,7 @@ fun EditRuleScreen(
                     )
                     Firebase.firestore.collection("rules").document(ruleId).update(updatedFields)
                         .addOnSuccessListener {
+                            isSaving = false
                             navController.popBackStack()
                         }
                         .addOnFailureListener {
@@ -1372,6 +1421,15 @@ fun EditRuleScreen(
                     fontSize = 18.sp,
                     color = Color(0xFF53291E),
                     fontWeight = FontWeight.SemiBold
+                )
+            }
+            errorMessage?.let { msg ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = msg,
+                    color = Color.Red,
+                    fontStyle = FontStyle.Italic,
+                    modifier = Modifier.padding(horizontal = 4.dp)
                 )
             }
         }
@@ -1611,6 +1669,8 @@ fun CreateHabitScreen(navController: NavController) {
 
     var babyUid by remember { mutableStateOf<String?>(null) }
 
+    var isSaving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     var showInactiveDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -2029,21 +2089,75 @@ fun CreateHabitScreen(navController: NavController) {
             }
         }
 
+        // Показываем индикатор над всеми полями, если идёт сохранение
+        if (isSaving) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
         // Кнопка сохранить
         Button(
             onClick = {
+                // валидация
+                if (title.isBlank()) {
+                    errorMessage = "Название привычки не может быть пустым"
+                    return@Button
+                }
+
                 if (status == "off") {
                     showInactiveDialog = true
-                } else {
-                    saveHabit(context, navController, babyUid, title, repeat, selectedDays, selectedSingleDay, time, reportType, category, points, penalty, reaction, reminder, status)
+                    return@Button
+                }
+                // начинаем сохранение
+                isSaving = true
+                errorMessage = null
+                saveHabit(
+                    context = context,
+                    navController = navController,
+                    babyUid = babyUid,
+                    title = title,
+                    repeat = repeat,
+                    selectedDays = selectedDays,
+                    selectedSingleDay = selectedSingleDay,
+                    time = time,
+                    reportType = reportType,
+                    category = category,
+                    points = points,
+                    penalty = penalty,
+                    reaction = reaction,
+                    reminder = reminder,
+                    status = status
+                ) { success, error ->
+                    isSaving = false
+                    if (success) {
+                        navController.popBackStack()
+                    } else {
+                        errorMessage = error ?: "Ошибка при добавлении привычки"
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth(),
+            enabled = !isSaving,
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8C8BB))
         ) {
-            Text("Сохранить привычку", color = textColor)
+            if (isSaving) {
+                Text("Сохранение…", color = textColor)
+            } else {
+                Text("Сохранить привычку", color = textColor)
+            }
         }
 
+        // Ошибка под кнопкой
+        errorMessage?.let { msg ->
+            Text(
+                text = msg,
+                color = Color.Red,
+                fontStyle = FontStyle.Italic,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        // Диалог для подтверждения отключенного статуса
         if (showInactiveDialog) {
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { showInactiveDialog = false },
@@ -2068,12 +2182,39 @@ fun CreateHabitScreen(navController: NavController) {
                     Button(
                         onClick = {
                             showInactiveDialog = false
-                            saveHabit(context, navController, babyUid, title, repeat, selectedDays, selectedSingleDay, time, reportType, category, points, penalty, reaction, reminder, status)
+                            isSaving = true
+                            errorMessage = null
+
+
+                            saveHabit(
+                                context = context,
+                                navController = navController,
+                                babyUid = babyUid,
+                                title = title,
+                                repeat = repeat,
+                                selectedDays = selectedDays,
+                                selectedSingleDay = selectedSingleDay,
+                                time = time,
+                                reportType = reportType,
+                                category = category,
+                                points = points,
+                                penalty = penalty,
+                                reaction = reaction,
+                                reminder = reminder,
+                                status = status
+                            ) { success, error ->
+                                isSaving = false
+                                if (success) {
+                                    navController.popBackStack()
+                                } else {
+                                    errorMessage = error ?: "Ошибка при добавлении привычки"
+                                }
+                            }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF5D8CE)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Да", color = Color(0xFF53291E), fontWeight = FontWeight.SemiBold)
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF5D8CE)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                        Text("Да")
                     }
                 },
                 dismissButton = {
@@ -2108,7 +2249,9 @@ fun saveHabit(
     penalty: Int,
     reaction: String,
     reminder: String,
-    status: String
+    status: String,
+
+    onComplete: (success: Boolean, error: String?) -> Unit
 ) {
     val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
     val actualBabyUid = babyUid ?: return
@@ -2176,13 +2319,8 @@ fun saveHabit(
 
     Firebase.firestore.collection("habits")
         .add(habit)
-        .addOnSuccessListener {
-            Toast.makeText(context, "Привычка добавлена", Toast.LENGTH_SHORT).show()
-            navController.popBackStack()
-        }
-        .addOnFailureListener {
-            Toast.makeText(context, "Ошибка при добавлении", Toast.LENGTH_SHORT).show()
-        }
+        .addOnSuccessListener { onComplete(true, null) }
+        .addOnFailureListener { e -> onComplete(false, e.localizedMessage) }
 }
 
 
