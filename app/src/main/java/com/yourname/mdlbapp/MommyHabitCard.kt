@@ -117,6 +117,16 @@ fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
                         Spacer(modifier = Modifier.width(4.dp))
                     }
                 }
+                Spacer(modifier = Modifier.height(4.dp))
+
+                val status = habit["status"] as? String ?: "off"
+
+                Text(
+                    text = if (status == "on") "Статус: Активна" else "Статус: Отключена",
+                    fontSize = 14.sp,
+                    color = if (status == "on") Color(0xFF006400) else Color.Gray,
+                    fontStyle = FontStyle.Italic
+                )
             }
 
 

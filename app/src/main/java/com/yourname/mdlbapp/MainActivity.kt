@@ -97,6 +97,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.google.android.play.integrity.internal.e
+import com.google.firebase.BuildConfig
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.Query
@@ -116,6 +117,8 @@ class MainActivity : ComponentActivity() {
         FirebaseApp.initializeApp(this)
         enableEdgeToEdge()
         setContent {
+            val isTestMode = BuildConfig.DEBUG
+
             MDLBAppTheme {
                 val navController = rememberNavController()
 
@@ -1496,7 +1499,12 @@ fun HabitsScreen(navController: NavController) {
             }
     }
 
-    val groupedHabits = habits
+    val (activeHabits, inactiveHabits) = habits.partition {
+        val status = it["status"] as? String ?: "off"
+        status == "on"
+    }
+
+    val groupedHabits = activeHabits
         .mapNotNull {
             val dateStr = it["nextDueDate"] as? String ?: return@mapNotNull null
             val date = try {
@@ -1550,6 +1558,7 @@ fun HabitsScreen(navController: NavController) {
                     .clickable { navController.popBackStack() }
             )
         }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1563,7 +1572,8 @@ fun HabitsScreen(navController: NavController) {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
+                        .padding(bottom = 120.dp), // ⬅ пространство под кнопку
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     groupedHabits.forEach { (date, habitsForDate) ->
@@ -1584,8 +1594,20 @@ fun HabitsScreen(navController: NavController) {
                         }
                     }
 
-                    item {
-                        Spacer(modifier = Modifier.height(100.dp))
+                    if (inactiveHabits.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "⛔️ Отключённые привычки",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+
+                        items(inactiveHabits) { habit ->
+                            MommyHabitCard(habit, navController)
+                        }
                     }
                 }
             }
@@ -1672,6 +1694,7 @@ fun CreateHabitScreen(navController: NavController) {
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showInactiveDialog by remember { mutableStateOf(false) }
+
 
     LaunchedEffect(Unit) {
         val mommyUid = FirebaseAuth.getInstance().currentUser?.uid
@@ -2108,6 +2131,19 @@ fun CreateHabitScreen(navController: NavController) {
                     showInactiveDialog = true
                     return@Button
                 }
+
+                if (status == "on") {
+                    if (repeat == "weekly" && selectedDays.isEmpty()) {
+                        errorMessage = "Выберите хотя бы один день недели"
+                        return@Button
+                    }
+
+                    if (repeat == "once" && selectedSingleDay.isNullOrEmpty()) {
+                        errorMessage = "Выберите день для однократной привычки"
+                        return@Button
+                    }
+                }
+
                 // начинаем сохранение
                 isSaving = true
                 errorMessage = null
@@ -2185,6 +2221,17 @@ fun CreateHabitScreen(navController: NavController) {
                             isSaving = true
                             errorMessage = null
 
+                            if (status == "on") {
+                                if (repeat == "weekly" && selectedDays.isEmpty()) {
+                                    errorMessage = "Выберите хотя бы один день недели"
+                                    return@Button
+                                }
+
+                                if (repeat == "once" && selectedSingleDay.isNullOrEmpty()) {
+                                    errorMessage = "Выберите день для однократной привычки"
+                                    return@Button
+                                }
+                            }
 
                             saveHabit(
                                 context = context,
@@ -2289,12 +2336,18 @@ fun saveHabit(
     } else null
 
 
-    val nextDueDate = getNextDueDate(
-        repeatMode = repeat,
-        daysOfWeek = if (repeat == "weekly") selectedDays else null,
-        oneTimeDate = actualOneTimeDate,
-        deadline = deadlineString
-    )
+    val nextDueDate = if (status == "on") {
+        getNextDueDate(
+            repeatMode = repeat,
+            daysOfWeek = if (repeat == "weekly") selectedDays else null,
+            oneTimeDate = actualOneTimeDate,
+            deadline = deadlineString
+        ) ?: run {
+            onComplete(false, "Не удалось определить дату следующего выполнения.")
+            return
+        }
+    } else null
+
 
 
     val habit = hashMapOf(
@@ -2544,6 +2597,9 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
 
     var categoryExpanded by remember { mutableStateOf(false) }
     var reactionExpanded by remember { mutableStateOf(false) }
+
+    var isSaving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(habitId) {
         Firebase.firestore.collection("habits").document(habitId).get()
@@ -2875,9 +2931,26 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
             }
         }
 
-        // Кнопки
+        var isSaving by remember { mutableStateOf(false) }
+        var errorMessage by remember { mutableStateOf<String?>(null) }
+
+// Показываем индикатор над кнопками, если идёт сохранение
+        if (isSaving) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+// Кнопки
         Button(
             onClick = {
+                if (title.isBlank()) {
+                    errorMessage = "Название не может быть пустым"
+                    return@Button
+                }
+
+                isSaving = true
+                errorMessage = null
+
                 val deadline = time?.let { dateFormatter.format(it.time) } ?: "23:59"
                 val updated = mapOf(
                     "title" to title,
@@ -2901,12 +2974,17 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
                     }
                     .addOnFailureListener {
                         Toast.makeText(context, "Ошибка при сохранении", Toast.LENGTH_SHORT).show()
+                        isSaving = false
                     }
             },
             modifier = Modifier.fillMaxWidth(),
+            enabled = !isSaving,
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8C8BB))
         ) {
-            Text("Сохранить", color = textColor)
+            Text(
+                if (isSaving) "Сохранение…" else "Сохранить",
+                color = textColor
+            )
         }
 
         OutlinedButton(
