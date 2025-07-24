@@ -2,6 +2,8 @@
 
 package com.yourname.mdlbapp
 
+import java.time.DayOfWeek
+
 val RuleCategories = listOf(
     "Поведение",
     "Речь",
@@ -11,3 +13,4 @@ val RuleCategories = listOf(
     "Дисциплина",
     "Прочее"
 )
+

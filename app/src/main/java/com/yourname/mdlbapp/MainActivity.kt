@@ -1,5 +1,12 @@
 package com.yourname.mdlbapp
 
+import java.time.Duration
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.util.concurrent.TimeUnit
+import android.app.Application
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.format.TextStyle
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -11,6 +18,7 @@ import com.yourname.mdlbapp.Rule
 import androidx.compose.runtime.*
 import androidx.compose.foundation.BorderStroke
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -104,6 +112,9 @@ import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.yourname.mdlbapp.ui.theme.MDLBAppTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.LocalTime
@@ -111,14 +122,14 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         FirebaseApp.initializeApp(this)
         enableEdgeToEdge()
         setContent {
-            val isTestMode = BuildConfig.DEBUG
-
             MDLBAppTheme {
                 val navController = rememberNavController()
 
@@ -1483,6 +1494,7 @@ fun HabitsScreen(navController: NavController) {
 
     val habits = remember { mutableStateListOf<Map<String, Any>>() }
 
+    val context = LocalContext.current
     LaunchedEffect(Unit) {
         val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
         Firebase.firestore.collection("habits")
@@ -1495,6 +1507,15 @@ fun HabitsScreen(navController: NavController) {
                     if (data != null) {
                         habits.add(data + ("id" to doc.id))
                     }
+                }
+                if (DateUtils.hasDateChanged(context)) {
+                    println("День сменился! Перераспределяем привычки...")
+                    val fromDate = getLastKnownDate(context) ?: LocalDate.now().minusDays(1)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        updateHabitsNextDueDate(habits, fromDate)
+                    }
+                } else {
+                    println("Тот же день — всё ок.")
                 }
             }
     }
@@ -1652,6 +1673,60 @@ fun HabitsScreen(navController: NavController) {
         }
     }
 }
+
+fun getLastKnownDate(context: Context): LocalDate? {
+    val prefs = context.getSharedPreferences("habit_prefs", Context.MODE_PRIVATE)
+    return prefs.getString("last_date", null)?.let {
+        try {
+            LocalDate.parse(it)
+        } catch (e: Exception) {
+            null
+        }
+    }
+}
+
+suspend fun updateHabitsNextDueDate(habits: List<Map<String, Any>>, fromDate: LocalDate) {
+    val db = Firebase.firestore
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    val today = LocalDate.now()
+    val todayDayOfWeek = today.dayOfWeek.name
+
+    for (habit in habits) {
+        val habitId = habit["id"] as? String ?: continue
+        val repeat = habit["repeat"] as? String ?: "daily"
+
+        val newDate = when (repeat) {
+            "daily" -> today
+
+            "weekly" -> {
+                val daysOfWeek = habit["daysOfWeek"] as? List<String> ?: emptyList()
+                // Если сегодня не входит в запланированные дни — пересчитать
+                if (!daysOfWeek.contains(todayDayOfWeek)) {
+                    findNextScheduledDay(daysOfWeek, today)
+                } else {
+                    continue // оставить как есть
+                }
+            }
+
+            "once" -> continue
+
+            else -> continue
+        }
+
+        db.collection("habits").document(habitId)
+            .update("nextDueDate", newDate.format(formatter))
+    }
+}
+
+fun findNextScheduledDay(days: List<String>, from: LocalDate): LocalDate {
+    var date = from.plusDays(1)
+    repeat(7) {
+        if (days.contains(date.dayOfWeek.name)) return date
+        date = date.plusDays(1)
+    }
+    return from // fallback, но не должен случаться
+}
+
 
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -2476,6 +2551,8 @@ fun BabyHabitsScreen(navController: NavController) {
     val textColor = Color(0xFF53291E)
     val textColorMain = Color(0xFF000000)
 
+    val context = LocalContext.current
+
     // 🔄 Подгружаем привычки, выданные Мамочкой
     LaunchedEffect(Unit) {
         val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
@@ -2492,7 +2569,17 @@ fun BabyHabitsScreen(navController: NavController) {
                     }
                 }
             }
+        if (DateUtils.hasDateChanged(context)) {
+            println("День сменился! Перераспределяем привычки...")
+            val fromDate = getLastKnownDate(context) ?: LocalDate.now().minusDays(1)
+            CoroutineScope(Dispatchers.IO).launch {
+                updateHabitsNextDueDate(habits, fromDate)
+            }
+        } else {
+            println("Тот же день — всё ок.")
+        }
     }
+
 
     // 🔁 Группировка по дате nextDueDate
     val groupedHabits = habits
@@ -3004,5 +3091,26 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
         ) {
             Text("Удалить привычку")
         }
+    }
+}
+
+
+object DateUtils {
+    private val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+    fun getCurrentDate(): String {
+        return LocalDate.now().format(formatter)
+    }
+
+    fun hasDateChanged(context: Context): Boolean {
+        val prefs = context.getSharedPreferences("habit_prefs", Context.MODE_PRIVATE)
+        val lastDate = prefs.getString("last_date", null)
+        val today = getCurrentDate()
+
+        if (lastDate != today) {
+            prefs.edit().putString("last_date", today).apply()
+            return true
+        }
+        return false
     }
 }
