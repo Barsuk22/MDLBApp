@@ -23,6 +23,11 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +60,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Button
@@ -1494,6 +1501,10 @@ fun HabitsScreen(navController: NavController) {
 
     val habits = remember { mutableStateListOf<Map<String, Any>>() }
 
+    var showInactive by remember { mutableStateOf(false) }
+
+    var showFinished by remember { mutableStateOf(false) }
+
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
@@ -1520,20 +1531,32 @@ fun HabitsScreen(navController: NavController) {
             }
     }
 
-    val (activeHabits, inactiveHabits) = habits.partition {
+    // ▶ 1) Отбираем разовые с дедлайном в прошлом
+    val today = LocalDate.now()
+    val finishedOnceHabits = habits.filter { habit ->
+        val repeat = habit["repeat"] as? String ?: "daily"
+        if (repeat == "once") {
+            val ds = (habit["nextDueDate"] as? String).orEmpty()
+            val d = runCatching { LocalDate.parse(ds) }.getOrNull()
+            d != null && d.isBefore(today)
+        } else false
+    }
+
+    // ▶ 2) Остальные привычки (повторяющиеся + разовые c дедлайном ≥ today)
+    val otherHabits = habits - finishedOnceHabits
+
+    // ▶ 3) Из остальных: активные и отключённые
+    val (activeHabits, inactiveHabits) = otherHabits.partition {
         val status = it["status"] as? String ?: "off"
         status == "on"
     }
 
+    // ▶ 4) Группировка активных (они все due, потому что просроченные once уже вынесены)
     val groupedHabits = activeHabits
-        .mapNotNull {
-            val dateStr = it["nextDueDate"] as? String ?: return@mapNotNull null
-            val date = try {
-                LocalDate.parse(dateStr)
-            } catch (e: Exception) {
-                null
-            } ?: return@mapNotNull null
-            date to it
+        .mapNotNull { habit ->
+            val ds = habit["nextDueDate"] as? String ?: return@mapNotNull null
+            val d = runCatching { LocalDate.parse(ds) }.getOrNull() ?: return@mapNotNull null
+            d to habit
         }
         .groupBy({ it.first }, { it.second })
         .toSortedMap()
@@ -1615,19 +1638,87 @@ fun HabitsScreen(navController: NavController) {
                         }
                     }
 
+                    // === 2) Завершённые одноразовые ===
+                    if (finishedOnceHabits.isNotEmpty()) {
+                        // заголовок сворачиваемого списка
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showFinished = !showFinished }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "✅ Завершённые привычки",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Gray,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    imageVector = if (showFinished)
+                                        Icons.Default.KeyboardArrowUp
+                                    else
+                                        Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    tint = Color.Gray
+                                )
+                            }
+                        }
+                        // сам список в AnimatedVisibility
+                        item {
+                            AnimatedVisibility(
+                                visible = showFinished,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    finishedOnceHabits.forEach { habit ->
+                                        MommyHabitCard(habit, navController)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+
                     if (inactiveHabits.isNotEmpty()) {
                         item {
-                            Text(
-                                text = "⛔️ Отключённые привычки",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.Gray,
-                                modifier = Modifier.padding(vertical = 8.dp)
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showInactive = !showInactive }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "⛔️ Отключённые привычки",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Gray,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    imageVector = if (showInactive) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    tint = Color.Gray
+                                )
+                            }
                         }
 
-                        items(inactiveHabits) { habit ->
-                            MommyHabitCard(habit, navController)
+                        item {
+                            AnimatedVisibility(
+                                visible = showInactive,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    inactiveHabits.forEach { habit ->
+                                        MommyHabitCard(habit, navController)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1685,46 +1776,56 @@ fun getLastKnownDate(context: Context): LocalDate? {
     }
 }
 
-suspend fun updateHabitsNextDueDate(
-    habits: List<Map<String, Any>>,
-    fromDate: LocalDate = LocalDate.now()
+fun updateHabitsNextDueDate(
+    habits: List<Map<String, Any?>>,
+    fromDate: LocalDate = LocalDate.now(),
 ) {
-    val db = Firebase.firestore
-    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    val db       = Firebase.firestore
+    val isoFmt   = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    val nowTime  = LocalTime.now()
 
     habits.forEach { habit ->
-        val habitId = habit["id"] as? String ?: return@forEach
-        val repeat = habit["repeat"] as? String ?: "daily"
-        val daysOfWeek = habit["daysOfWeek"] as? List<String> ?: emptyList()
+        // 1. Сначала вытаскиваем из записи всё, что нам нужно:
+        val habitId     = habit["id"] as? String ?: return@forEach
+        val repeat      = habit["repeat"] as? String ?: "daily"
+        val daysOfWeek  = habit["daysOfWeek"] as? List<String>
+        val oneTimeDate = habit["oneTimeDate"] as? String
+        val deadlineStr = habit["deadline"] as? String
 
-        val newDueDate: LocalDate = when (repeat) {
-            "daily" -> fromDate
-
-            "weekly" -> {
-                // Перебираем дату от fromDate до fromDate+6 и находим первую,
-                // чей русский аббревиатурный день недели есть в daysOfWeek
-                (0L..6L).asSequence()
-                    .map { fromDate.plusDays(it) }
-                    .first { date ->
-                        val ru = Constants.dayOfWeekToRu[date.dayOfWeek]
-                        ru != null && daysOfWeek.contains(ru)
-                    }
+        if (repeat == "once") {
+            val oneTimeDate = habit["oneTimeDate"] as? String
+            val parsed = runCatching { LocalDate.parse(oneTimeDate) }.getOrNull()
+            if (parsed != null && parsed.isBefore(LocalDate.now())) {
+                // дедлайн в прошлом — “отключаем” привычку
+                db.collection("habits")
+                    .document(habitId)
+                    .update("status", "off")
             }
-
-            "once" -> return@forEach  // для одноразовых привычек не меняем
-
-            else -> return@forEach   // непонятный repeat — пропускаем
+            return@forEach  // дальше nextDueDate для once-не считается
         }
 
-        // Сравниваем с тем, что сейчас лежит в Firestore
-        val oldDateStr = habit["nextDueDate"] as? String
-        val oldDate = oldDateStr?.let { LocalDate.parse(it, formatter) }
+        // 2. Вычисляем новую дату через нашу функцию:
+        val newDueDate: LocalDate? = computeNextDueDateForHabit(
+            repeatMode  = repeat,
+            daysOfWeek  = daysOfWeek,
+            oneTimeDate = oneTimeDate,
+            deadline    = deadlineStr,
+            fromDate    = fromDate,
+            nowTime     = nowTime
+        )
 
+        // Если функция вернула null — пропускаем эту привычку:
+        if (newDueDate == null) return@forEach
+
+        // 3. Сравниваем со старой датой из Firestore:
+        val oldDateStr = habit["nextDueDate"] as? String
+        val oldDate    = oldDateStr?.let { LocalDate.parse(it, isoFmt) }
+
+        // 4. Если даты не совпадают — обновляем документ:
         if (oldDate != newDueDate) {
-            // Обновляем только если дата действительно сменилась
             db.collection("habits")
                 .document(habitId)
-                .update("nextDueDate", newDueDate.format(formatter))
+                .update("nextDueDate", newDueDate.format(isoFmt))
         }
     }
 }

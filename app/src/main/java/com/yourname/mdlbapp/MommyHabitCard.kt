@@ -1,5 +1,7 @@
 package com.yourname.mdlbapp
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -34,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -50,7 +54,9 @@ import androidx.navigation.NavController
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.util.Calendar
 
 @Composable
 fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
@@ -66,6 +72,23 @@ fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
 
     var expanded by remember { mutableStateOf(false) }
     var showDeactivateDialog by remember { mutableStateOf(false) }
+
+
+    // ▶ NEW: определяем, что это просроченная once-привычка
+    val repeat = habit["repeat"] as? String ?: "daily"
+    val nextDue = (habit["nextDueDate"] as? String).orEmpty()
+    val dueDate = runCatching { LocalDate.parse(nextDue) }.getOrNull()
+    val isFinishedOnce = repeat == "once" && dueDate?.isBefore(LocalDate.now()) == true
+
+
+    // ▶ NEW: флаги для Date/Time Picker
+    var showDatePicker by remember { mutableStateOf(false) }
+    var pickedDate by remember { mutableStateOf<LocalDate?>(null) }
+    var showTimePicker by remember { mutableStateOf(false) }
+    var pickedTime by remember { mutableStateOf<LocalTime?>(null) }
+
+    val context = LocalContext.current
+    val calendar = java.util.Calendar.getInstance()
 
     Box(
         modifier = Modifier
@@ -157,43 +180,86 @@ fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
                         .background(CardBackground)
                         .border(1.dp, CardBorderColor, RoundedCornerShape(12.dp))
                 ) {
-                    DropdownMenuItem(
-                        text = { Text("✏️ Редактировать", fontStyle = FontStyle.Italic, color = TextDarkBrown) },
-                        onClick = {
-                            expanded = false
-                            val id = habit["id"] as? String ?: return@DropdownMenuItem
-                            navController.navigate("edit_habit/$id")
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            val isActive = habit["status"] == "on"
-                            Text(
-                                text = if (isActive) "⏸️ Отключить" else "▶️ Активировать",
-                                fontStyle = FontStyle.Italic,
-                                color = TextDarkBrown
-                            )
-                        },
-                        onClick = {
-                            expanded = false
-                            val habitId = habit["id"] as? String ?: return@DropdownMenuItem
-                            val isActive = habit["status"] == "on"
-                            if (isActive) {
-                                showDeactivateDialog = true
-                            } else {
-                                Firebase.firestore.collection("habits").document(habitId)
-                                    .update("status", "on")
+                    if (isFinishedOnce) {
+                        // ▶ NEW: только две опции для завершённого once
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "Продолжить",
+                                    fontStyle = FontStyle.Italic,
+                                    color = TextDarkBrown
+                                )
+                            },
+                            onClick = {
+                                expanded = false
+                                showDatePicker = true
                             }
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("🗑️ Удалить", fontStyle = FontStyle.Italic, color = Color.Red) },
-                        onClick = {
-                            expanded = false
-                            val habitId = habit["id"] as? String ?: return@DropdownMenuItem
-                            Firebase.firestore.collection("habits").document(habitId).delete()
-                        }
-                    )
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "Удалить",
+                                    fontStyle = FontStyle.Italic,
+                                    color = Color.Red
+                                )
+                            },
+                            onClick = {
+                                expanded = false
+                                val id = habit["id"] as? String ?: return@DropdownMenuItem
+                                Firebase.firestore.collection("habits").document(id).delete()
+                            }
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "✏️ Редактировать",
+                                    fontStyle = FontStyle.Italic,
+                                    color = TextDarkBrown
+                                )
+                            },
+                            onClick = {
+                                expanded = false
+                                val id = habit["id"] as? String ?: return@DropdownMenuItem
+                                navController.navigate("edit_habit/$id")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                val isActive = habit["status"] == "on"
+                                Text(
+                                    text = if (isActive) "⏸️ Отключить" else "▶️ Активировать",
+                                    fontStyle = FontStyle.Italic,
+                                    color = TextDarkBrown
+                                )
+                            },
+                            onClick = {
+                                expanded = false
+                                val habitId = habit["id"] as? String ?: return@DropdownMenuItem
+                                val isActive = habit["status"] == "on"
+                                if (isActive) {
+                                    showDeactivateDialog = true
+                                } else {
+                                    Firebase.firestore.collection("habits").document(habitId)
+                                        .update("status", "on")
+                                }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "🗑️ Удалить",
+                                    fontStyle = FontStyle.Italic,
+                                    color = Color.Red
+                                )
+                            },
+                            onClick = {
+                                expanded = false
+                                val habitId = habit["id"] as? String ?: return@DropdownMenuItem
+                                Firebase.firestore.collection("habits").document(habitId).delete()
+                            }
+                        )
+                    }
                 }
 
 
@@ -267,7 +333,56 @@ fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
             shape = RoundedCornerShape(16.dp)
         )
     }
+    // ▶ NEW: диалог выбора даты
+    LaunchedEffect(showDatePicker) {
+        if (showDatePicker) {
+            DatePickerDialog(
+                context,
+                { _, year, month, dayOfMonth ->
+                    pickedDate = LocalDate.of(year, month + 1, dayOfMonth)
+                    showDatePicker = false
+                    showTimePicker = true
+                },
+                calendar.get(Calendar.YEAR),
+                calendar.get(Calendar.MONTH),
+                calendar.get(Calendar.DAY_OF_MONTH)
+            ).show()
+        }
+    }
+
+// ▶ actual Android TimePicker
+    LaunchedEffect(showTimePicker) {
+        if (showTimePicker) {
+            TimePickerDialog(
+                context,
+                { _, hourOfDay, minute ->
+                    pickedTime = LocalTime.of(hourOfDay, minute)
+                    showTimePicker = false
+                    // после выбора времени сохраняем в Firestore
+                    val newDateStr = pickedDate!!.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                    val newDateTimeStr = pickedDate!!
+                        .atTime(pickedTime!!)
+                        .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                    Firebase.firestore
+                        .collection("habits")
+                        .document(habit["id"] as String)
+                        .update(
+                            mapOf(
+                                "nextDueDate" to newDateStr,
+                                "deadline"    to newDateTimeStr,
+                                "status"      to "on"
+                            )
+                        )
+                },
+                calendar.get(Calendar.HOUR_OF_DAY),
+                calendar.get(Calendar.MINUTE),
+                true
+            ).show()
+        }
+    }
 }
+
+
 
 
 
