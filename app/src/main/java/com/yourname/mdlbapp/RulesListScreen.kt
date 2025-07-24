@@ -37,6 +37,10 @@ import androidx.navigation.NavController
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import com.yourname.mdlbapp.Constants
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun RulesListScreen(navController: NavController) {
@@ -282,3 +286,101 @@ fun RuleCard(
         }
     }
 }
+
+fun computeNextDueDateForHabit(
+    repeatMode: String,
+    daysOfWeek: List<String>?,
+    oneTimeDate: String?,
+    deadline: String?,
+    fromDate: LocalDate,
+    nowTime: LocalTime
+): LocalDate? {
+    // Для ежедневных и weekly мы уже умеем считать строки дат,
+    // так что делаем обратное: парсим строку → LocalDate
+    return when (repeatMode) {
+        "daily" -> {
+            // просто берём строку и парсим её
+            getNextDueDate("daily", null, null, deadline, fromDate, nowTime)
+                ?.let { LocalDate.parse(it) }
+        }
+        "weekly" -> {
+            getNextDueDate("weekly", daysOfWeek, null, deadline, fromDate, nowTime)
+                ?.let { LocalDate.parse(it) }
+        }
+        "once" -> {
+            // если oneTimeDate есть и валидна, возвращаем её как LocalDate
+            oneTimeDate
+                ?.takeIf { it.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) }
+                ?.let { LocalDate.parse(it) }
+        }
+        else -> null
+    }
+}
+
+fun getNextDueDate(
+    repeatMode: String,
+    daysOfWeek: List<String>? = null,
+    oneTimeDate: String? = null,
+    deadline: String? = null,
+    today: LocalDate,
+    nowTime: LocalTime
+): String? {
+    val formatter = DateTimeFormatter.ofPattern("HH:mm")
+
+    // Парсим дедлайн
+    val deadlineTime = deadline
+        ?.takeIf { it.matches(Regex("\\d{2}:\\d{2}")) }
+        ?.let { LocalTime.parse(it, formatter) }
+
+    return when (repeatMode) {
+        "daily" -> {
+            // если сегодня уже поздно — завтра, иначе сегодня
+            if (deadlineTime != null && nowTime.isAfter(deadlineTime))
+                today.plusDays(1).toString()
+            else
+                today.toString()
+        }
+
+        "weekly" -> {
+            if (daysOfWeek.isNullOrEmpty()) return null
+
+            // Преобразуем русские аббревиатуры в DayOfWeek
+            val wantedDows = daysOfWeek.mapNotNull { Constants.ruToDayOfWeek[it] }
+            if (wantedDows.isEmpty()) return null
+
+            // Создаём последовательность пар (offset, date)
+            val (_, bestDate) = (0L..6L).asSequence()
+                .map { offset -> offset to today.plusDays(offset) }
+                .first { (offset, date) ->
+                    // 1) дата по дню недели входит в wantedDows
+                    date.dayOfWeek in wantedDows
+                            // 2) если это сегодня (offset == 0) и есть дедлайн — ещё проверяем время
+                            && !(offset == 0L && deadlineTime != null && nowTime.isAfter(deadlineTime))
+                }
+
+            bestDate.toString()
+        }
+
+        "once" -> {
+            // Если oneTimeDate не в формате YYYY-MM-DD, возвращаем null
+            oneTimeDate
+                ?.takeIf { it.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) }
+        }
+        else   -> null
+    }
+}
+
+// "Продакшн"-оболочка, для обычного вызова без параметров:
+fun getNextDueDate(
+    repeatMode: String,
+    daysOfWeek: List<String>? = null,
+    oneTimeDate: String? = null,
+    deadline: String? = null
+): String? = getNextDueDate(
+    repeatMode,
+    daysOfWeek,
+    oneTimeDate,
+    deadline,
+    LocalDate.now(),
+    LocalTime.now()
+)

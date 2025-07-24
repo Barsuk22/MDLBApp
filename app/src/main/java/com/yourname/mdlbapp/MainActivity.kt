@@ -1204,7 +1204,7 @@ fun CategoryDropdown(
     onCategorySelected: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val categories = RuleCategories
+    val categories = Constants.RuleCategories
 
     ExposedDropdownMenuBox(
         expanded = expanded,
@@ -1685,48 +1685,49 @@ fun getLastKnownDate(context: Context): LocalDate? {
     }
 }
 
-suspend fun updateHabitsNextDueDate(habits: List<Map<String, Any>>, fromDate: LocalDate) {
+suspend fun updateHabitsNextDueDate(
+    habits: List<Map<String, Any>>,
+    fromDate: LocalDate = LocalDate.now()
+) {
     val db = Firebase.firestore
     val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-    val today = LocalDate.now()
-    val todayDayOfWeek = today.dayOfWeek.name
 
-    for (habit in habits) {
-        val habitId = habit["id"] as? String ?: continue
+    habits.forEach { habit ->
+        val habitId = habit["id"] as? String ?: return@forEach
         val repeat = habit["repeat"] as? String ?: "daily"
+        val daysOfWeek = habit["daysOfWeek"] as? List<String> ?: emptyList()
 
-        val newDate = when (repeat) {
-            "daily" -> today
+        val newDueDate: LocalDate = when (repeat) {
+            "daily" -> fromDate
 
             "weekly" -> {
-                val daysOfWeek = habit["daysOfWeek"] as? List<String> ?: emptyList()
-                // Если сегодня не входит в запланированные дни — пересчитать
-                if (!daysOfWeek.contains(todayDayOfWeek)) {
-                    findNextScheduledDay(daysOfWeek, today)
-                } else {
-                    continue // оставить как есть
-                }
+                // Перебираем дату от fromDate до fromDate+6 и находим первую,
+                // чей русский аббревиатурный день недели есть в daysOfWeek
+                (0L..6L).asSequence()
+                    .map { fromDate.plusDays(it) }
+                    .first { date ->
+                        val ru = Constants.dayOfWeekToRu[date.dayOfWeek]
+                        ru != null && daysOfWeek.contains(ru)
+                    }
             }
 
-            "once" -> continue
+            "once" -> return@forEach  // для одноразовых привычек не меняем
 
-            else -> continue
+            else -> return@forEach   // непонятный repeat — пропускаем
         }
 
-        db.collection("habits").document(habitId)
-            .update("nextDueDate", newDate.format(formatter))
+        // Сравниваем с тем, что сейчас лежит в Firestore
+        val oldDateStr = habit["nextDueDate"] as? String
+        val oldDate = oldDateStr?.let { LocalDate.parse(it, formatter) }
+
+        if (oldDate != newDueDate) {
+            // Обновляем только если дата действительно сменилась
+            db.collection("habits")
+                .document(habitId)
+                .update("nextDueDate", newDueDate.format(formatter))
+        }
     }
 }
-
-fun findNextScheduledDay(days: List<String>, from: LocalDate): LocalDate {
-    var date = from.plusDays(1)
-    repeat(7) {
-        if (days.contains(date.dayOfWeek.name)) return date
-        date = date.plusDays(1)
-    }
-    return from // fallback, но не должен случаться
-}
-
 
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -1760,9 +1761,6 @@ fun CreateHabitScreen(navController: NavController) {
     val weekDays = listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
     var selectedSingleDay by remember { mutableStateOf<String?>(null) }
-
-    var selectedWeekDays by remember { mutableStateOf<List<Int>>(emptyList()) }
-    var selectedOnceDate by remember { mutableStateOf<String?>(null) }
 
     var babyUid by remember { mutableStateOf<String?>(null) }
 
@@ -2363,7 +2361,7 @@ fun saveHabit(
     title: String,
     repeat: String,
     selectedDays: List<String>,
-    selectedSingleDay: String?,
+    selectedSingleDay: String?,    // для once передаём сюда дату (например "2025-07-24")
     time: Calendar?,
     reportType: String,
     category: String,
@@ -2377,72 +2375,59 @@ fun saveHabit(
 ) {
     val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
     val actualBabyUid = babyUid ?: return
+    val today      = LocalDate.now()
 
-    val deadlineString = time?.let {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(it.time)
-    } ?: "23:59"
-
-    val today = LocalDate.now()
-    val nowTime = LocalTime.now()
-    val dayMapping = mapOf(
-        "Пн" to 1, "Вт" to 2, "Ср" to 3,
-        "Чт" to 4, "Пт" to 5, "Сб" to 6, "Вс" to 7
-    )
-
-    val deadlineTime = try {
-        LocalTime.parse(deadlineString, DateTimeFormatter.ofPattern("HH:mm"))
-    } catch (e: Exception) {
-        LocalTime.MAX
-    }
-
-    val actualOneTimeDate = if (repeat == "once" && !selectedSingleDay.isNullOrBlank()) {
-        val targetInt = dayMapping[selectedSingleDay]
-        if (targetInt != null) {
-            val todayInt = today.dayOfWeek.value
-            val offset = if (targetInt == todayInt && nowTime.isAfter(deadlineTime)) {
-                7
-            } else if (targetInt >= todayInt) {
-                targetInt - todayInt
-            } else {
-                7 - (todayInt - targetInt)
-            }
-            today.plusDays(offset.toLong()).toString()
-        } else null
+    // 1) Для once-режима: конвертим аббревиатуру в ближайшую дату
+    val oneTimeIso: String? = if (repeat == "once" && !selectedSingleDay.isNullOrBlank()) {
+        // получаем DayOfWeek из нашей мапы
+        val targetDow = Constants.ruToDayOfWeek[selectedSingleDay]
+        if (targetDow == null) {
+            onComplete(false, "Неправильный день для одноразовой привычки")
+            return
+        }
+        // ищем ближайший день (0..6)
+        val date = (0L..6L).asSequence()
+            .map { today.plusDays(it) }
+            .first { it.dayOfWeek == targetDow }
+        date.toString()   // ISO: "2025-07-24"
     } else null
 
+    // Формируем строку-дедлайн (HH:mm), default = "23:59"
+    val deadlineString = time
+        ?.let { SimpleDateFormat("HH:mm", Locale.getDefault()).format(it.time) }
+        ?: "23:59"
 
+    // Вычисляем nextDueDate через единую функцию
     val nextDueDate = if (status == "on") {
         getNextDueDate(
-            repeatMode = repeat,
-            daysOfWeek = if (repeat == "weekly") selectedDays else null,
-            oneTimeDate = actualOneTimeDate,
-            deadline = deadlineString
+            repeatMode  = repeat,
+            daysOfWeek  = if (repeat == "weekly") selectedDays else null,
+            oneTimeDate = oneTimeIso,
+            deadline    = deadlineString
         ) ?: run {
             onComplete(false, "Не удалось определить дату следующего выполнения.")
             return
         }
     } else null
 
-
-
     val habit = hashMapOf(
-        "title" to title,
-        "repeat" to repeat,
-        "daysOfWeek" to selectedDays,
-        "oneTimeDate" to actualOneTimeDate,
-        "deadline" to deadlineString,
-        "reportType" to reportType,
-        "category" to category,
-        "points" to points,
-        "penalty" to penalty,
-        "reaction" to reaction,
-        "reminder" to reminder,
-        "status" to status,
-        "mommyUid" to mommyUid,
-        "babyUid" to actualBabyUid,
-        "nextDueDate" to nextDueDate,
+        "title"         to title,
+        "repeat"        to repeat,
+        "daysOfWeek"    to selectedDays,
+        "oneTimeDate"   to oneTimeIso,
+        "deadline"      to deadlineString,
+        "reportType"    to reportType,
+        "category"      to category,
+        "points"        to points,
+        "penalty"       to penalty,
+        "reaction"      to reaction,
+        "reminder"      to reminder,
+        "status"        to status,
+        "mommyUid"      to mommyUid,
+        "babyUid"       to actualBabyUid,
+        "nextDueDate"   to nextDueDate,
         "completedToday" to false,
-        "currentStreak" to 0
+        "currentStreak"  to 0
     )
 
     Firebase.firestore.collection("habits")
@@ -2453,63 +2438,7 @@ fun saveHabit(
 
 
 
-fun getNextDueDate(
-    repeatMode: String,
-    daysOfWeek: List<String>? = null,
-    oneTimeDate: String? = null,
-    deadline: String? = null // формат HH:mm
-): String? {
-    val today = LocalDate.now()
-    val nowTime = LocalTime.now()
 
-    // Парсим дедлайн
-    val deadlineTime = try {
-        deadline?.let {
-            LocalTime.parse(it, DateTimeFormatter.ofPattern("HH:mm"))
-        }
-    } catch (e: Exception) {
-        null
-    }
-
-    return when (repeatMode) {
-        "daily" -> {
-            val isTooLate = deadlineTime != null && nowTime.isAfter(deadlineTime)
-            if (isTooLate) today.plusDays(1).toString() else today.toString()
-        }
-
-        "weekly" -> {
-            if (daysOfWeek.isNullOrEmpty()) return null
-
-            val dayMapping = mapOf(
-                "Пн" to 1, "Вт" to 2, "Ср" to 3,
-                "Чт" to 4, "Пт" to 5, "Сб" to 6, "Вс" to 7
-            )
-
-            val todayInt = today.dayOfWeek.value
-            val weekInts = daysOfWeek.mapNotNull { dayMapping[it] }.sorted()
-
-            val nextValid = weekInts.firstOrNull {
-                if (it == todayInt) {
-                    deadlineTime == null || nowTime.isBefore(deadlineTime)
-                } else it > todayInt
-            } ?: weekInts.first()
-
-            val offset = if (nextValid > todayInt) {
-                nextValid - todayInt
-            } else if (nextValid == todayInt) {
-                if (deadlineTime != null && nowTime.isAfter(deadlineTime)) 7 else 0
-            } else {
-                7 - (todayInt - nextValid)
-            }
-
-            today.plusDays(offset.toLong()).toString()
-        }
-
-        "once" -> oneTimeDate
-
-        else -> null
-    }
-}
 
 
 
