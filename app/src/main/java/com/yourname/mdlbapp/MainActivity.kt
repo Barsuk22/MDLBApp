@@ -1,12 +1,6 @@
 package com.yourname.mdlbapp
 
-import java.time.Duration
-import java.time.LocalDateTime
-import java.time.ZoneId
-import java.util.concurrent.TimeUnit
-import android.app.Application
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import androidx.compose.material3.TextButton
 import java.time.format.TextStyle
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -28,6 +22,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +32,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -44,29 +40,39 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -86,6 +92,7 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -103,6 +110,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -111,6 +119,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.work.ExistingPeriodicWorkPolicy
 import com.google.android.play.integrity.internal.e
 import com.google.firebase.BuildConfig
 import com.google.firebase.FirebaseApp
@@ -120,6 +129,7 @@ import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.yourname.mdlbapp.ui.theme.MDLBAppTheme
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
@@ -128,14 +138,23 @@ import java.time.LocalTime
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-
+import java.time.LocalDateTime
+import java.time.Duration
+import java.util.concurrent.TimeUnit
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         FirebaseApp.initializeApp(this)
+
+        scheduleDailyHabitUpdate(this)
+
         enableEdgeToEdge()
+
         setContent {
             MDLBAppTheme {
                 val navController = rememberNavController()
@@ -251,10 +270,57 @@ class MainActivity : ComponentActivity() {
                             val habitId = backStackEntry.arguments?.getString("habitId") ?: ""
                             EditHabitScreen(navController, habitId)
                         }
+                        composable("mommy_rewards") {
+                            RewardsListScreen(navController)
+                        }
+                        composable("create_reward") {
+                            val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+                            var babyUid by remember { mutableStateOf<String?>(null) }
+
+                            LaunchedEffect(mommyUid) {
+                                Firebase.firestore.collection("users")
+                                    .document(mommyUid)
+                                    .get()
+                                    .addOnSuccessListener { doc ->
+                                        babyUid = doc.getString("pairedWith")
+                                    }
+                            }
+
+                            babyUid?.let {
+                                CreateRewardScreen(navController, mommyUid, it)
+                            } ?: run {
+                                // Пока не загрузился UID малыша — показываем заглушку
+                                Text("Загрузка UID малыша...")
+                            }
+                        }
+                        composable("edit_reward/{rewardId}") { backStackEntry ->
+                            val rewardId = backStackEntry.arguments?.getString("rewardId") ?: ""
+                            EditRewardScreen(navController, rewardId)
+                        }
                     }
                 }
             }
         }
+    }
+
+    fun scheduleDailyHabitUpdate(context: Context) {
+        // рассчитываем задержку до ближайшей полуночи
+        val now = LocalDateTime.now()
+        val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay()
+        val delay = Duration.between(now, nextMidnight).toMillis()
+
+        val request = PeriodicWorkRequestBuilder<HabitUpdateWorker>(
+            1, TimeUnit.DAYS
+        )
+            .setInitialDelay(delay, TimeUnit.MILLISECONDS)
+            .build()
+
+        WorkManager.getInstance(context)
+            .enqueueUniquePeriodicWork(
+                "habit_update",
+                ExistingPeriodicWorkPolicy.KEEP,
+                request
+            )
     }
 
     @Composable
@@ -478,7 +544,7 @@ class MainActivity : ComponentActivity() {
                                         when (label) {
                                             "Привычки" -> navController.navigate("habits_screen")
                                             "Правила\nпослушания" -> navController.navigate("rules_screen")
-                                            // другие экраны — позже
+                                            "Магазин\nласки" -> navController.navigate("mommy_rewards")
                                         }
                                     }
                                 )
@@ -1519,15 +1585,6 @@ fun HabitsScreen(navController: NavController) {
                         habits.add(data + ("id" to doc.id))
                     }
                 }
-                if (DateUtils.hasDateChanged(context)) {
-                    println("День сменился! Перераспределяем привычки...")
-                    val fromDate = getLastKnownDate(context) ?: LocalDate.now().minusDays(1)
-                    CoroutineScope(Dispatchers.IO).launch {
-                        updateHabitsNextDueDate(habits, fromDate)
-                    }
-                } else {
-                    println("Тот же день — всё ок.")
-                }
             }
     }
 
@@ -1785,51 +1842,81 @@ fun updateHabitsNextDueDate(
     val nowTime  = LocalTime.now()
 
     habits.forEach { habit ->
-        // 1. Сначала вытаскиваем из записи всё, что нам нужно:
         val habitId     = habit["id"] as? String ?: return@forEach
         val repeat      = habit["repeat"] as? String ?: "daily"
         val daysOfWeek  = habit["daysOfWeek"] as? List<String>
         val oneTimeDate = habit["oneTimeDate"] as? String
         val deadlineStr = habit["deadline"] as? String
+        val completed   = habit["completedToday"] as? Boolean ?: false
 
         if (repeat == "once") {
-            val oneTimeDate = habit["oneTimeDate"] as? String
             val parsed = runCatching { LocalDate.parse(oneTimeDate) }.getOrNull()
             if (parsed != null && parsed.isBefore(LocalDate.now())) {
-                // дедлайн в прошлом — “отключаем” привычку
                 db.collection("habits")
                     .document(habitId)
                     .update("status", "off")
             }
-            return@forEach  // дальше nextDueDate для once-не считается
+            return@forEach
         }
 
-        // 2. Вычисляем новую дату через нашу функцию:
-        val newDueDate: LocalDate? = computeNextDueDateForHabit(
+        val newDueDate = computeNextDueDateForHabit(
             repeatMode  = repeat,
             daysOfWeek  = daysOfWeek,
             oneTimeDate = oneTimeDate,
             deadline    = deadlineStr,
             fromDate    = fromDate,
             nowTime     = nowTime
-        )
+        ) ?: return@forEach
 
-        // Если функция вернула null — пропускаем эту привычку:
-        if (newDueDate == null) return@forEach
-
-        // 3. Сравниваем со старой датой из Firestore:
         val oldDateStr = habit["nextDueDate"] as? String
         val oldDate    = oldDateStr?.let { LocalDate.parse(it, isoFmt) }
 
-        // 4. Если даты не совпадают — обновляем документ:
+        val updates = mutableMapOf<String, Any>()
+
+        // если дата сменилась — обновим её и сбросим completedToday
         if (oldDate != newDueDate) {
+            updates["nextDueDate"] = newDueDate.format(isoFmt)
+            updates["completedToday"] = false
+        }
+
+        // если пропущена вчерашняя due-дата — сбрасываем серию
+        if ((oldDate == fromDate) && !completed) {
+            updates["currentStreak"] = 0L
+        }
+
+        // если есть что обновлять — шлём в Firebase
+        if (updates.isNotEmpty()) {
             db.collection("habits")
                 .document(habitId)
-                .update("nextDueDate", newDueDate.format(isoFmt))
+                .update(updates)
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun EmojiPickerGrid(
+    items: List<Int>,
+    onSelect: (Int) -> Unit
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(5),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement   = Arrangement.spacedBy(8.dp),
+        modifier              = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 300.dp)
+    ) {
+        items(items) { resId ->
+            ReactionImage(
+                resId = resId,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable { onSelect(resId) }
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -1850,7 +1937,6 @@ fun CreateHabitScreen(navController: NavController) {
     val repeatOptions = listOf("Каждый день" to "daily", "По дням недели" to "weekly", "Один раз" to "once")
     val reportOptions = listOf("Нет отчета" to "none", "Текст" to "text", "Фото" to "photo", "Аудио" to "audio", "Видео" to "video")
     val categories = listOf("Дисциплина", "Забота", "Поведение", "Настроение")
-    val reactions = listOf("Никакой", "Грусть Мамочки", "Лишение поощрения", "Стыдный комментарий")
 
     val scrollState = rememberScrollState()
 
@@ -1869,6 +1955,18 @@ fun CreateHabitScreen(navController: NavController) {
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showInactiveDialog by remember { mutableStateOf(false) }
 
+
+    var reactionImageRes by remember { mutableStateOf<Int?>(null) }
+
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    val emojiRes: List<Int> = remember {
+        R.drawable::class.java
+            .declaredFields
+            .filter { it.name.startsWith("emo_") }
+            .mapNotNull {
+                runCatching { it.getInt(null) }.getOrNull()
+            }
+    }
 
     LaunchedEffect(Unit) {
         val mommyUid = FirebaseAuth.getInstance().currentUser?.uid
@@ -2242,33 +2340,68 @@ fun CreateHabitScreen(navController: NavController) {
         }
 
         // Реакция Мамочки
-        Text("\uD83D\uDCDD Выберите реакцию", fontWeight = FontWeight.SemiBold, color = textColor)
-        var reactionExpanded by remember { mutableStateOf(false) }
-        ExposedDropdownMenuBox(expanded = reactionExpanded, onExpandedChange = { reactionExpanded = !reactionExpanded }) {
-            OutlinedTextField(
-                value = reaction,
-                onValueChange = {},
-                readOnly = true,
-                placeholder = { Text("Не выбрано", color = textColor) },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = reactionExpanded) },
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = textColor)
-            )
-            ExposedDropdownMenu(expanded = reactionExpanded, onDismissRequest = { reactionExpanded = false }) {
-                reactions.forEach {
-                    DropdownMenuItem(text = { Text(it) }, onClick = {
-                        reaction = it
-                        reactionExpanded = false
-                    })
+
+        // 1) Заголовок
+        Column(
+            horizontalAlignment = Alignment.Start,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp) // Немного отступов
+        ) {
+            Text("Выбор реакции", fontWeight = FontWeight.SemiBold, color = textColor)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+            ) {
+                if (reactionImageRes != null) {
+                    ReactionImage(
+                        resId = reactionImageRes!!,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .align(Alignment.CenterStart)
+                    )
+                } else {
+                    Text(
+                        text = "Не выбрано",
+                        color = textColor.copy(alpha = 0.5f),
+                        modifier = Modifier.align(Alignment.CenterStart)
+                    )
                 }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clickable { showEmojiPicker = true }
+                )
             }
+        }
+
+        // 3) Диалог выбора эмодзи:
+        if (showEmojiPicker) {
+            AlertDialog(
+                onDismissRequest = { showEmojiPicker = false },
+                title = { Text("Выберите смайлик") },
+                text = {
+                    EmojiPickerGrid(
+                        items = emojiRes
+                    ) { selectedRes ->
+                        reactionImageRes = selectedRes
+                        showEmojiPicker  = false
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showEmojiPicker = false }) {
+                        Text("Отмена")
+                    }
+                }
+            )
         }
 
         // Сообщение в реакции
         OutlinedTextField(
-            value = reminder,
-            onValueChange = { reminder = it },
-            label = { Text("\uD83D\uDCAC Сообщение в реакции") },
+            value = reaction,
+            onValueChange = { reaction = it },
+            label = { Text("💬 Сообщение в реакции") },
             modifier = Modifier.fillMaxWidth(),
             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = textColor)
         )
@@ -2336,7 +2469,8 @@ fun CreateHabitScreen(navController: NavController) {
                     penalty = penalty,
                     reaction = reaction,
                     reminder = reminder,
-                    status = status
+                    status = status,
+                    reactionImageRes = reactionImageRes,
                 ) { success, error ->
                     isSaving = false
                     if (success) {
@@ -2422,7 +2556,8 @@ fun CreateHabitScreen(navController: NavController) {
                                 penalty = penalty,
                                 reaction = reaction,
                                 reminder = reminder,
-                                status = status
+                                status = status,
+                                reactionImageRes = reactionImageRes
                             ) { success, error ->
                                 isSaving = false
                                 if (success) {
@@ -2455,6 +2590,7 @@ fun CreateHabitScreen(navController: NavController) {
     }
 }
 
+
 fun saveHabit(
     context: Context,
     navController: NavController,
@@ -2471,6 +2607,7 @@ fun saveHabit(
     reaction: String,
     reminder: String,
     status: String,
+    reactionImageRes: Int?,
 
     onComplete: (success: Boolean, error: String?) -> Unit
 ) {
@@ -2528,7 +2665,8 @@ fun saveHabit(
         "babyUid"       to actualBabyUid,
         "nextDueDate"   to nextDueDate,
         "completedToday" to false,
-        "currentStreak"  to 0
+        "currentStreak"  to 0,
+        "reactionImageRes" to reactionImageRes,
     )
 
     Firebase.firestore.collection("habits")
@@ -2599,17 +2737,7 @@ fun BabyHabitsScreen(navController: NavController) {
                     }
                 }
             }
-        if (DateUtils.hasDateChanged(context)) {
-            println("День сменился! Перераспределяем привычки...")
-            val fromDate = getLastKnownDate(context) ?: LocalDate.now().minusDays(1)
-            CoroutineScope(Dispatchers.IO).launch {
-                updateHabitsNextDueDate(habits, fromDate)
-            }
-        } else {
-            println("Тот же день — всё ок.")
-        }
     }
-
 
     // 🔁 Группировка по дате nextDueDate
     val groupedHabits = habits
@@ -2696,8 +2824,10 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
     val repeatOptions = listOf("Каждый день" to "daily", "По дням недели" to "weekly", "Один раз" to "once")
     val reportOptions = listOf("Нет отчета" to "none", "Текст" to "text", "Фото" to "photo", "Аудио" to "audio", "Видео" to "video")
     val categories = listOf("Дисциплина", "Забота", "Поведение", "Настроение")
-    val reactions = listOf("Никакой", "Грусть Мамочки", "Лишение поощрения", "Стыдный комментарий")
     val weekDays = listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+
+
+
 
     var title by remember { mutableStateOf("") }
     var repeat by remember { mutableStateOf("once") }
@@ -2717,6 +2847,17 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
 
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    var reactionImageRes by remember { mutableStateOf<Int?>(null) }
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    val emojiRes: List<Int> = remember {
+        R.drawable::class.java
+            .declaredFields
+            .filter { it.name.startsWith("emo_") }
+            .mapNotNull {
+                runCatching { it.getInt(null) }.getOrNull()
+            }
+    }
 
     LaunchedEffect(habitId) {
         Firebase.firestore.collection("habits").document(habitId).get()
@@ -2740,6 +2881,7 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
                     reaction = data["reaction"] as? String ?: ""
                     reminder = data["reminder"] as? String ?: ""
                     status = data["status"] as? String ?: "off"
+                    reactionImageRes = (data["reactionImageRes"] as? Long)?.toInt()
                 }
             }
             .addOnFailureListener {
@@ -3006,30 +3148,67 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
             }
         }
 
-        Text("📢 Реакция Мамочки", fontWeight = FontWeight.SemiBold, color = textColor)
-        ExposedDropdownMenuBox(expanded = reactionExpanded, onExpandedChange = { reactionExpanded = !reactionExpanded }) {
-            OutlinedTextField(
-                value = reaction,
-                onValueChange = {},
-                readOnly = true,
-                placeholder = { Text("Не выбрано", color = textColor) },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = reactionExpanded) },
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = textColor)
-            )
-            ExposedDropdownMenu(expanded = reactionExpanded, onDismissRequest = { reactionExpanded = false }) {
-                reactions.forEach {
-                    DropdownMenuItem(text = { Text(it) }, onClick = {
-                        reaction = it
-                        reactionExpanded = false
-                    })
+        // Реакция Мамочки
+
+        // 1) Заголовок
+        Column(
+            horizontalAlignment = Alignment.Start,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp) // Немного отступов
+        ) {
+            Text("Выбор реакции", fontWeight = FontWeight.SemiBold, color = textColor)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+            ) {
+                if (reactionImageRes != null) {
+                    ReactionImage(
+                        resId = reactionImageRes!!,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .align(Alignment.CenterStart)
+                    )
+                } else {
+                    Text(
+                        text = "Не выбрано",
+                        color = textColor.copy(alpha = 0.5f),
+                        modifier = Modifier.align(Alignment.CenterStart)
+                    )
                 }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clickable { showEmojiPicker = true }
+                )
             }
         }
 
+        // 3) Диалог выбора эмодзи:
+        if (showEmojiPicker) {
+            AlertDialog(
+                onDismissRequest = { showEmojiPicker = false },
+                title = { Text("Выберите смайлик") },
+                text = {
+                    EmojiPickerGrid(
+                        items = emojiRes
+                    ) { selectedRes ->
+                        reactionImageRes = selectedRes
+                        showEmojiPicker  = false
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showEmojiPicker = false }) {
+                        Text("Отмена")
+                    }
+                }
+            )
+        }
+
         OutlinedTextField(
-            value = reminder,
-            onValueChange = { reminder = it },
+            value = reaction,
+            onValueChange = { reaction = it },
             label = { Text("💬 Сообщение в реакции") },
             modifier = Modifier.fillMaxWidth(),
             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = textColor)
@@ -3079,9 +3258,10 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
                     "category" to category,
                     "points" to points,
                     "penalty" to penalty,
-                    "reaction" to reaction,
                     "reminder" to reminder,
-                    "status" to status
+                    "status" to status,
+                    "reaction" to reaction,
+                    "reactionImageRes" to reactionImageRes
                 )
                 Firebase.firestore.collection("habits").document(habitId)
                     .update(updated)
@@ -3124,23 +3304,422 @@ fun EditHabitScreen(navController: NavController, habitId: String) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RewardsListScreen(navController: NavController) {
+    val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+    val rewards = remember { mutableStateListOf<Reward>() }
 
-object DateUtils {
-    private val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    // 1) Состояния для babyUid и totalPoints
+    var babyUid by remember { mutableStateOf<String?>(null) }
+    var totalPoints by remember { mutableStateOf(0) }
 
-    fun getCurrentDate(): String {
-        return LocalDate.now().format(formatter)
+    // 2) Подгружаем список наград как раньше
+    LaunchedEffect(mommyUid) {
+        Firebase.firestore
+            .collection("rewards")
+            .whereEqualTo("createdBy", mommyUid)
+            .orderBy("createdAt")
+            .addSnapshotListener { snap, _ ->
+                rewards.clear()
+                snap?.documents
+                    ?.mapNotNull { it.toObject(Reward::class.java)?.apply { id = it.id } }
+                    ?.let { rewards.addAll(it) }
+            }
     }
 
-    fun hasDateChanged(context: Context): Boolean {
-        val prefs = context.getSharedPreferences("habit_prefs", Context.MODE_PRIVATE)
-        val lastDate = prefs.getString("last_date", null)
-        val today = getCurrentDate()
+    // 3) Один эффект для получения babyUid
+    LaunchedEffect(mommyUid) {
+        Firebase.firestore
+            .collection("users")
+            .document(mommyUid)
+            .get()
+            .addOnSuccessListener { doc ->
+                babyUid = doc.getString("pairedWith")
+            }
+    }
 
-        if (lastDate != today) {
-            prefs.edit().putString("last_date", today).apply()
-            return true
+    // 4) Как только babyUid загрузился — подписываемся на points
+    LaunchedEffect(babyUid) {
+        val bid = babyUid ?: return@LaunchedEffect
+        Firebase.firestore
+            .collection("points")
+            .document(bid)
+            .addSnapshotListener { snap, _ ->
+                totalPoints = snap?.getLong("totalPoints")?.toInt() ?: 0
+            }
+    }
+
+    // 5) В самом UI уже только чтение состояний
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF8EDE6))
+            .padding(12.dp)
+    ) {
+        TopAppBar(
+            title = { Text("Магазин Ласки", fontSize = 26.sp, fontStyle = FontStyle.Italic) },
+            navigationIcon = {
+                IconButton(onClick = { navController.popBackStack() }) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Назад")
+                }
+            },
+            actions = {
+                IconButton(onClick = { navController.navigate("create_reward") }) {
+                    Icon(Icons.Default.Add, contentDescription = "Добавить")
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFFF8EDE6))
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Показываем либо счётчик, либо индикатор загрузки babyUid
+        if (babyUid != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFFFF4E8), RoundedCornerShape(12.dp))
+                    .border(1.dp, Color(0xFFD9B99B), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Всего баллов: $totalPoints 🪙",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF552216)
+                )
+            }
+        } else {
+            // пока babyUid ещё не подгрузился
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Загрузка баллов…", fontStyle = FontStyle.Italic, color = Color.Gray)
+            }
         }
-        return false
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(rewards) { reward ->
+                RewardCard(
+                    reward = reward,
+                    onEdit = { navController.navigate("edit_reward/${reward.id}") },
+                    onDelete = {
+                        reward.id?.let { Firebase.firestore.collection("rewards").document(it).delete() }
+                    }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = { navController.navigate("create_reward") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            Text("＋ Новая награда", fontSize = 20.sp, fontStyle = FontStyle.Italic)
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Поощрения для любимого нижнего :)",
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+            fontSize = 16.sp,
+            fontStyle = FontStyle.Italic,
+            color = Color(0xFF552216)
+        )
+    }
+}
+
+@Composable
+fun RewardCard(reward: Reward, onEdit: () -> Unit, onDelete: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0xFFDEBEB5), RoundedCornerShape(12.dp))
+            .background(Color(0xFFFDF2EC), RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = reward.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        color = Color(0xFF552216)
+                    )
+                    Text(
+                        text = "${reward.cost} баллов • ${reward.type}",
+                        fontSize = 16.sp,
+                        color = Color(0xFF552216),
+                        fontStyle = FontStyle.Italic
+                    )
+                }
+
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_close),
+                        contentDescription = "Удалить",
+                        tint = Color(0xFF552216)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = reward.description,
+                fontSize = 18.sp,
+                color = Color(0xFF4A3C36),
+                fontStyle = FontStyle.Italic
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onEdit) {
+                    Text(
+                        text = "Изменить",
+                        color = Color(0xFF552216),
+                        fontSize = 16.sp,
+                        fontStyle = FontStyle.Italic
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CreateRewardScreen(
+    navController: NavController,
+    mommyUid: String,
+    babyUid: String
+) {
+    val rewardName = remember { mutableStateOf("") }
+    val rewardDetails = remember { mutableStateOf("") }
+    val rewardCost = remember { mutableStateOf("") }
+    val rewardType = remember { mutableStateOf("Контентная") }
+    val autoApprove = remember { mutableStateOf(false) }
+    val limit = remember { mutableStateOf("Без ограничений") }
+    val messageFromMommy = remember { mutableStateOf("") }
+
+    var isSaving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFFDE9DD))
+            .padding(horizontal = 24.dp)
+    ) {
+        Spacer(modifier = Modifier.height(30.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    text = "Создание новой награды",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontStyle = FontStyle.Italic,
+                    color = Color(0xFF53291E)
+                )
+                Text(
+                    text = "Придумайте награду вашего солнышка...",
+                    fontSize = 16.sp,
+                    fontStyle = FontStyle.Italic,
+                    color = Color(0xFF290E0C)
+                )
+            }
+
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Назад",
+                modifier = Modifier
+                    .size(35.dp)
+                    .clickable { navController.popBackStack() },
+                tint = Color(0xFF53291E)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        OutlinedTextField(
+            value = rewardName.value,
+            onValueChange = { rewardName.value = it },
+            label = { Text("Название награды") },
+            placeholder = { Text("Лечь спать позже") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = rewardDetails.value,
+            onValueChange = { rewardDetails.value = it },
+            label = { Text("Описание награды") },
+            placeholder = { Text("Разрешение лечь спать на час позже") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = rewardCost.value,
+            onValueChange = { rewardCost.value = it },
+            label = { Text("Стоимость (баллы)") },
+            placeholder = { Text("10") },
+            keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text("Тип награды", fontWeight = FontWeight.Medium, color = Color(0xFF53291E))
+        RewardTypeDropdown(
+            selectedOption = rewardType.value,
+            onOptionSelected = { rewardType.value = it }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = autoApprove.value,
+                onCheckedChange = { autoApprove.value = it }
+            )
+            Text("Автоматическое подтверждение")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = messageFromMommy.value,
+            onValueChange = { messageFromMommy.value = it },
+            label = { Text("Сообщение от Мамочки") },
+            placeholder = { Text("Ты заслужил это!") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        if (isSaving) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        Button(
+            onClick = {
+                isSaving = true
+                errorMessage = null
+
+                val costValue = rewardCost.value.toIntOrNull()
+
+                if (rewardName.value.isNotBlank() && rewardDetails.value.isNotBlank() && costValue != null) {
+                    val newReward = hashMapOf(
+                        "title" to rewardName.value,
+                        "description" to rewardDetails.value,
+                        "cost" to costValue,
+                        "type" to rewardType.value,
+                        "autoApprove" to autoApprove.value,
+                        "limit" to limit.value,
+                        "messageFromMommy" to messageFromMommy.value,
+                        "createdBy" to mommyUid,
+                        "targetUid" to babyUid,
+                        "createdAt" to System.currentTimeMillis()
+                    )
+
+                    Firebase.firestore.collection("rewards")
+                        .add(newReward)
+                        .addOnSuccessListener {
+                            isSaving = false
+                            navController.popBackStack()
+                        }
+                        .addOnFailureListener { e ->
+                            isSaving = false
+                            errorMessage = e.localizedMessage ?: "Ошибка при сохранении"
+                        }
+                } else {
+                    isSaving = false
+                    errorMessage = "Заполните все обязательные поля корректно"
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF5D8CE)),
+            shape = RoundedCornerShape(12.dp),
+            enabled = !isSaving
+        ) {
+            Text(if (isSaving) "Сохранение…" else "Сохранить награду")
+        }
+
+        errorMessage?.let { msg ->
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(msg, color = Color.Red, modifier = Modifier.padding(horizontal = 8.dp))
+        }
+    }
+}
+
+
+
+@Composable
+fun EditRewardScreen(navController: NavController, rewardId: String) {
+    // TODO: реализовать позже
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RewardTypeDropdown(selectedOption: String, onOptionSelected: (String) -> Unit) {
+    val options = listOf("Контентная", "Поведенческая", "Эмоциональная", "Привилегия")
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded }
+    ) {
+        OutlinedTextField(
+            value = selectedOption,
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth(),
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onOptionSelected(option)
+                        expanded = false
+                    }
+                )
+            }
+        }
     }
 }

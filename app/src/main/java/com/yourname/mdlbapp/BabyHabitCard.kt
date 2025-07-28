@@ -2,6 +2,7 @@ package com.yourname.mdlbapp
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -26,9 +28,12 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.SegmentedButtonDefaults.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,24 +42,56 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.ktx.Firebase
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun BabyHabitCard(habit: Map<String, Any>) {
+    val habitId = habit["id"] as? String ?: return
     val title = habit["title"] as? String ?: "Без названия"
     val reportType = habit["reportType"] as? String ?: "none"
-    val completedToday = habit["completedToday"] as? Boolean ?: false
-    val currentStreak = habit["currentStreak"] as? Long ?: 0L
     val dailyTarget = 1
 
-    val CardBackground = Color(0xFFF8E7DF)
+    // Локальный стейт, чтобы UI сразу реагировал
+    var completed by remember { mutableStateOf(habit["completedToday"] as? Boolean ?: false) }
+    var streak by remember { mutableStateOf((habit["currentStreak"] as? Long ?: 0L).toInt()) }
+
+    // Цвета и модификаторы…
     val CardBorderColor = Color(0xFFE0C2BD)
     val TextDarkBrown = Color(0xFF552216)
+
+    // 1. Считаем дедлайн из данных привычки (строка в формате "HH:mm")
+    val deadlineStr = habit["deadline"] as? String
+    val deadlineTime = runCatching {
+        LocalTime.parse(deadlineStr, DateTimeFormatter.ofPattern("HH:mm"))
+    }.getOrNull()
+    val nowTime = LocalTime.now()
+    val beforeDeadline = deadlineTime?.let { nowTime.isBefore(it) } ?: true
+
+    // 2. Выбираем цвет фона карточки:
+    val activeBg = Color(0xFFF8E7DF)
+    val doneBeforeDeadlineBg = Color(0xFFCCB2AB) // темнее
+    val cardBg = if (completed && beforeDeadline) doneBeforeDeadlineBg else activeBg
+
+
+
+    val scheduledStr = habit["dueDate"] as? String   // e.g. "2025-07-28"
+    val scheduledDate = runCatching {
+        LocalDate.parse(scheduledStr, DateTimeFormatter.ISO_DATE)
+    }.getOrNull()
+    val isToday = scheduledDate == LocalDate.now()
+
+    // Считаем, можно ли выполнить
+    val canComplete = !completed && beforeDeadline && isToday
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .border(4.dp, CardBorderColor, RoundedCornerShape(12.dp))
-            .background(CardBackground, RoundedCornerShape(12.dp))
+            .background(cardBg, RoundedCornerShape(12.dp))  // <-- здесь используем cardBg
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Row(
@@ -62,9 +99,8 @@ fun BabyHabitCard(habit: Map<String, Any>) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Top
         ) {
-            // Левая часть: заголовок + серия
-            Column(modifier = Modifier.weight(1f) .offset(y = 20.dp, x = 20.dp)) {
-                // 🔖 Название
+            // Левый блок: название + серия
+            Column(modifier = Modifier.weight(1f).offset(y = 20.dp, x = 20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_habit_name),
@@ -72,7 +108,7 @@ fun BabyHabitCard(habit: Map<String, Any>) {
                         tint = TextDarkBrown,
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = title,
                         fontSize = 20.sp,
@@ -81,52 +117,49 @@ fun BabyHabitCard(habit: Map<String, Any>) {
                         color = TextDarkBrown
                     )
                 }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // 🔥 Серия
+                Spacer(Modifier.height(6.dp))
+                // 🔥 Серия + мини-календарь
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "🔥 $currentStreak день",
+                        text = "🔥 $streak ${if (streak % 10 == 1 && streak != 11) "день" else "дня"}",
                         fontSize = 14.sp,
                         color = TextDarkBrown,
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    repeat(7) {
+                    repeat(7) { index ->
                         Box(
                             modifier = Modifier
                                 .size(10.dp)
                                 .border(1.dp, TextDarkBrown, CircleShape)
-                                .background(Color.White, CircleShape)
+                                .background(
+                                    // если точка в пределах текущей серии — закрашиваем
+                                    if (index < streak) TextDarkBrown else Color.White,
+                                    CircleShape
+                                )
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                     }
                 }
             }
 
-
-            // Правая часть: иконка меню + отчёт + выполнено
+            // Правый блок: меню, отчёт, счётчик + плюс
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.Top,
-                modifier = Modifier.offset(y = 6.dp) // ⬅ приопускаем всё
+                modifier = Modifier.offset(y = 6.dp)
             ) {
                 IconButton(
-                    onClick = { /* TODO */ },
+                    onClick = { /* TODO: меню */ },
                     modifier = Modifier.offset(y = (-4).dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "Меню",
-                        tint = TextDarkBrown
-                    )
+                    Icon(Icons.Default.MoreVert, contentDescription = "Меню", tint = TextDarkBrown)
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(Modifier.height(4.dp))
 
                 Text(
-                    text = "$reportType",
+                    text = reportType,
                     fontSize = 14.sp,
                     color = TextDarkBrown,
                     modifier = Modifier.offset(y = (-20).dp),
@@ -134,14 +167,54 @@ fun BabyHabitCard(habit: Map<String, Any>) {
                     fontStyle = FontStyle.Italic
                 )
 
-                Text(
-                    text = "${if (completedToday) "1" else "0"}/$dailyTarget",
-                    fontSize = 14.sp,
-                    color = TextDarkBrown,
-                    modifier = Modifier.offset(y = (-20).dp),
-                    fontWeight = FontWeight.Bold,
-                    fontStyle = FontStyle.Italic
-                )
+                // Счётчик + плюс в один Row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.offset(y = (-20).dp)
+                ) {
+                    Text(
+                        text = "${if (completed) dailyTarget else 0}/$dailyTarget",
+                        fontSize = 14.sp,
+                        color = TextDarkBrown,
+                        fontWeight = FontWeight.Bold,
+                        fontStyle = FontStyle.Italic
+                    )
+                    Spacer(Modifier.width(4.dp))
+
+                    if (canComplete) {
+                        // активный плюс до дедлайна
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Выполнить",
+                            tint = TextDarkBrown,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clickable {
+                                    // только сюда переходит, если canComplete == true
+                                    completed = true
+                                    streak += 1
+                                    Firebase
+                                        .firestore
+                                        .collection("habits")
+                                        .document(habitId)
+                                        .update(
+                                            mapOf(
+                                                "completedToday" to true,
+                                                "currentStreak" to streak.toLong()
+                                            )
+                                        )
+                                }
+                        )
+                    } else {
+                        // неактивный плюс после дедлайна или если уже выполнено
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            tint = TextDarkBrown.copy(alpha = 0.3f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
             }
         }
     }

@@ -70,8 +70,14 @@ dependencies {
 
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlin:kotlin-test:1.8.10") // если пользуешься KotlinTest-ассерциями
+    testImplementation("org.jetbrains.kotlin:kotlin-test:1.8.10")
 
     testImplementation("org.mockito:mockito-core:4.11.0")
     testImplementation("org.mockito.kotlin:mockito-kotlin:4.1.0")
+
+    implementation("io.coil-kt:coil-gif:2.4.0")
+    implementation("io.coil-kt:coil-compose:2.4.0")
+
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.work:work-gcm:2.9.0") // если нужен GCM
 }

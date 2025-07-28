@@ -90,11 +90,12 @@ fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
     val context = LocalContext.current
     val calendar = java.util.Calendar.getInstance()
 
+    val bg = if (completedToday) Color(0xFFCCB2AB) else CardBackground
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .border(4.dp, CardBorderColor, RoundedCornerShape(12.dp))
-            .background(CardBackground, RoundedCornerShape(12.dp))
+            .background(bg, RoundedCornerShape(12.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Row(
@@ -127,18 +128,21 @@ fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
                 // 🔥 Серия
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "🔥 $currentStreak день",
+                        text = "🔥 $currentStreak ${if (currentStreak == 1L) "день" else "дня"}",
                         fontSize = 14.sp,
                         color = TextDarkBrown,
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    repeat(7) {
+                    repeat(7) { idx ->
                         Box(
                             modifier = Modifier
                                 .size(10.dp)
                                 .border(1.dp, TextDarkBrown, CircleShape)
-                                .background(Color.White, CircleShape)
+                                .background(
+                                    if (idx < currentStreak) TextDarkBrown else Color.White,
+                                    CircleShape
+                                )
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                     }
@@ -275,7 +279,7 @@ fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
                 )
 
                 Text(
-                    text = "${if (completedToday) "1" else "0"}/$dailyTarget",
+                    text = "${if (completedToday) dailyTarget else 0}/$dailyTarget",
                     fontSize = 14.sp,
                     color = TextDarkBrown,
                     modifier = Modifier.offset(y = (-20).dp),
