@@ -18,6 +18,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -2733,6 +2734,12 @@ fun BabyHabitsScreen(navController: NavController) {
 
     val context = LocalContext.current
 
+    var showReaction      by remember { mutableStateOf(false) }
+    var reactionImageRes  by remember { mutableStateOf<Int?>(null) }
+    var reactionMessage   by remember { mutableStateOf("") }
+    var earnedPoints      by remember { mutableStateOf(0) }
+
+
     // 🔄 Подгружаем привычки, выданные Мамочкой
     LaunchedEffect(Unit) {
         val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
@@ -2765,54 +2772,100 @@ fun BabyHabitsScreen(navController: NavController) {
         .groupBy({ it.first }, { it.second }) // Группируем по LocalDate
         .toSortedMap() // Сортируем по возрастанию даты
 
+    // 1) Авто-скрытие через 3 секунды
+    LaunchedEffect(showReaction) {
+        if (showReaction) {
+            delay(3_000)            // ждём 3 секунды
+            showReaction = false    // и скрываем оверлей
+        }
+    }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(backgroundColor)
-            .padding(16.dp)
-    ) {
-        Spacer(modifier = Modifier.height(24.dp))
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(backgroundColor)
+                .padding(16.dp)
+        ) {
+            Spacer(modifier = Modifier.height(24.dp))
 
-        Text(
-            text = "🧸 Твои привычки",
-            fontSize = 26.sp,
-            fontWeight = FontWeight.Bold,
-            color = textColorMain,
-            fontStyle = FontStyle.Italic,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (habits.isEmpty()) {
             Text(
-                text = "Нет заданных привычек.\nЖди указаний Мамочки...",
+                text = "🧸 Твои привычки",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = textColorMain,
                 fontStyle = FontStyle.Italic,
-                color = Color.DarkGray,
-                fontSize = 18.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.align(Alignment.CenterHorizontally)
             )
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                groupedHabits.forEach { (date, habitsForDate) ->
-                    val dateLabel = formatDateLabel(date.toString()) // форматируем надпись
 
-                    item {
-                        Text(
-                            text = dateLabel,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = textColor,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                    }
+            Spacer(modifier = Modifier.height(16.dp))
 
-                    items(habitsForDate) { habit ->
-                        BabyHabitCard(habit)
+            if (habits.isEmpty()) {
+                Text(
+                    text = "Нет заданных привычек.\nЖди указаний Мамочки...",
+                    fontStyle = FontStyle.Italic,
+                    color = Color.DarkGray,
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    groupedHabits.forEach { (date, habitsForDate) ->
+                        val dateLabel = formatDateLabel(date.toString()) // форматируем надпись
+
+                        item {
+                            Text(
+                                text = dateLabel,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textColor,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+
+                        items(habitsForDate) { habit ->
+                            // 2) прокидываем onCompleted в карточку
+                            BabyHabitCard(
+                                habit = habit,
+                                onCompleted = {
+                                    // 1) Преобразуем res из Long (Firestore) в Int
+                                    reactionImageRes = (habit["reactionImageRes"] as? Long ?: 0L).toInt()
+                                    // 2) Текст реакции — в поле "reaction" (или "reactionMessage", смотрите, как назвали вы)
+                                    reactionMessage  = (habit["reaction"] as? String) ?: ""
+                                    // 3) Баллы
+                                    earnedPoints     = (habit["points"] as? Long ?: 1L).toInt()
+                                    // 4) Показываем оверлей
+                                    showReaction     = true
+                                }
+                            )
+                        }
                     }
                 }
+            }
+        }
+        AnimatedVisibility(
+            visible = showReaction && reactionImageRes != null,
+            enter   = fadeIn(animationSpec = tween(durationMillis = 500)),
+            exit    = fadeOut(animationSpec = tween(durationMillis = 500))
+        ) {
+            ReactionOverlay(
+                resId   = reactionImageRes!!,
+                message = reactionMessage,
+                points  = earnedPoints
+            ) {
+                showReaction = false  // тоже можно тапом закрывать
+            }
+        }
+
+        // 3) сам оверлей поверх всего
+        if (showReaction && reactionImageRes != null) {
+            ReactionOverlay(
+                resId = reactionImageRes!!,
+                message = reactionMessage,
+                points = earnedPoints
+            ) {
+                showReaction = false
             }
         }
     }

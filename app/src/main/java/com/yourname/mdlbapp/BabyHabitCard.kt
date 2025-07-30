@@ -49,7 +49,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun BabyHabitCard(habit: Map<String, Any>) {
+fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
     val habitId = habit["id"] as? String ?: return
     val title = habit["title"] as? String ?: "Без названия"
     val reportType = habit["reportType"] as? String ?: "none"
@@ -181,7 +181,6 @@ fun BabyHabitCard(habit: Map<String, Any>) {
                     Spacer(Modifier.width(4.dp))
 
                     if (canComplete) {
-                        // активный плюс до дедлайна
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Выполнить",
@@ -189,16 +188,22 @@ fun BabyHabitCard(habit: Map<String, Any>) {
                             modifier = Modifier
                                 .size(20.dp)
                                 .clickable {
+                                    val updates = mutableMapOf<String, Any>(
+                                        "completedToday" to true,
+                                        "currentStreak"  to (streak + 1).toLong()
+                                    )
+                                    if (habit["repeat"] as? String == "once") {
+                                        updates["status"] = "off"
+                                    }
                                     Firebase
                                         .firestore
                                         .collection("habits")
                                         .document(habitId)
-                                        .update(
-                                            mapOf(
-                                                "completedToday" to true,
-                                                "currentStreak"    to (streak + 1).toLong()
-                                            )
-                                        )
+                                        .update(updates)
+                                        .addOnSuccessListener {
+                                            // как только апдейт успешен — зовём коллбэк
+                                            onCompleted()
+                                        }
                                 }
                         )
                     } else {
