@@ -192,9 +192,6 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
                                         "completedToday" to true,
                                         "currentStreak"  to (streak + 1).toLong()
                                     )
-                                    if (habit["repeat"] as? String == "once") {
-                                        updates["status"] = "off"
-                                    }
                                     Firebase
                                         .firestore
                                         .collection("habits")

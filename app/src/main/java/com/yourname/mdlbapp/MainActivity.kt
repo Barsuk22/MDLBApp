@@ -1852,18 +1852,18 @@ fun updateHabitsNextDueDate(
         if (repeat == "once") {
             val parsed = runCatching { LocalDate.parse(oneTimeDate) }.getOrNull()
             val updates = mutableMapOf<String, Any>()
-
             if (parsed != null) {
                 if (parsed.isBefore(LocalDate.now())) {
-                    // Дата уже прошла — выключаем привычку
-                    updates["status"] = "off"
+                    // Дата прошла — отключаем привычку, сбрасываем daily-флаг и «горячие дни»
+                    updates["status"]         = "off"
+                    updates["completedToday"] = false
+                    updates["currentStreak"]  = 0L      // ← сброс серии
                 } else {
-                    // Дата ещё впереди — сразу ставим nextDueDate и сбрасываем completedToday
+                    // Если дата ещё не наступила — просто запланировать nextDueDate и сбросить completedToday
                     updates["nextDueDate"]    = parsed.format(isoFmt)
                     updates["completedToday"] = false
                 }
             }
-
             if (updates.isNotEmpty()) {
                 db.collection("habits")
                     .document(habitId)
@@ -1892,8 +1892,8 @@ fun updateHabitsNextDueDate(
             updates["completedToday"] = false
         }
 
-        // если пропущена вчерашняя due-дата — сбрасываем серию
-        if ((oldDate == fromDate) && !completed) {
+        // если предыдущий due-дата уже в прошлом и не была выполнена — сбрасываем серию
+        if (oldDate != null && oldDate.isBefore(fromDate) && !completed) {
             updates["currentStreak"] = 0L
         }
 
