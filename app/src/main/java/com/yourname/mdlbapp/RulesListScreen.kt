@@ -304,7 +304,7 @@ fun computeNextDueDateForHabit(
                 ?.let { LocalDate.parse(it) }
         }
         "weekly" -> {
-            getNextDueDate("weekly", daysOfWeek, null, deadline, fromDate, nowTime)
+            getNextDueDate("weekly", daysOfWeek, null, deadline, LocalDate.now(), nowTime)
                 ?.let { LocalDate.parse(it) }
         }
         "once" -> {
@@ -344,21 +344,19 @@ fun getNextDueDate(
         "weekly" -> {
             if (daysOfWeek.isNullOrEmpty()) return null
 
-            // Преобразуем русские аббревиатуры в DayOfWeek
             val wantedDows = daysOfWeek.mapNotNull { Constants.ruToDayOfWeek[it] }
             if (wantedDows.isEmpty()) return null
 
-            // Создаём последовательность пар (offset, date)
+            // Берём именно "сегодня" из системы — и от него считаем +0..+6 дней
+            val referenceDate = LocalDate.now()
+
             val (_, bestDate) = (0L..6L).asSequence()
-                .map { offset -> offset to today.plusDays(offset) }
-                .first { (offset, date) ->
-                    // 1) дата по дню недели входит в wantedDows
+                .map { offset -> offset to referenceDate.plusDays(offset) }
+                .first { (_, date) ->
                     date.dayOfWeek in wantedDows
-                            // 2) если это сегодня (offset == 0) и есть дедлайн — ещё проверяем время
-                            && !(offset == 0L && deadlineTime != null && nowTime.isAfter(deadlineTime))
                 }
 
-            bestDate.toString()
+            return bestDate.toString()
         }
 
         "once" -> {

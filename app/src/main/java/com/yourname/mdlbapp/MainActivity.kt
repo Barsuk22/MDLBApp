@@ -143,7 +143,7 @@ import java.time.Duration
 import java.util.concurrent.TimeUnit
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-
+import com.yourname.mdlbapp.HabitUpdateScheduler
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity() {
 
         FirebaseApp.initializeApp(this)
 
-        scheduleDailyHabitUpdate(this)
+        HabitUpdateScheduler.scheduleNext(this)
 
         enableEdgeToEdge()
 
@@ -226,8 +226,25 @@ class MainActivity : ComponentActivity() {
                         }
                         composable("rules_screen") {
                             val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-                            val babyUid = "вставь UID малыша"
-                            RulesScreen(navController = navController, mommyUid = mommyUid, babyUid = babyUid)
+                            var babyUid by remember { mutableStateOf<String?>(null) }
+
+                            LaunchedEffect(mommyUid) {
+                                Firebase.firestore.collection("users")
+                                    .document(mommyUid)
+                                    .get()
+                                    .addOnSuccessListener { doc ->
+                                        babyUid = doc.getString("pairedWith")
+                                    }
+                            }
+
+                            babyUid?.let {
+                                RulesScreen(navController = navController, mommyUid = mommyUid, it)
+                            } ?: run {
+                                // Пока не загрузился UID малыша — показываем заглушку
+                                Text("Загрузка UID малыша...")
+                            }
+
+
                         }
                         composable("mommy_rules") {
                             RulesListScreen(navController)
@@ -303,25 +320,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    fun scheduleDailyHabitUpdate(context: Context) {
-        // рассчитываем задержку до ближайшей полуночи
-        val now = LocalDateTime.now()
-        val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay()
-        val delay = Duration.between(now, nextMidnight).toMillis()
 
-        val request = PeriodicWorkRequestBuilder<HabitUpdateWorker>(
-            1, TimeUnit.DAYS
-        )
-            .setInitialDelay(delay, TimeUnit.MILLISECONDS)
-            .build()
-
-        WorkManager.getInstance(context)
-            .enqueueUniquePeriodicWork(
-                "habit_update",
-                ExistingPeriodicWorkPolicy.KEEP,
-                request
-            )
-    }
 
     @Composable
     fun RoleSelectionScreen(navController: NavHostController) {
@@ -1851,10 +1850,23 @@ fun updateHabitsNextDueDate(
 
         if (repeat == "once") {
             val parsed = runCatching { LocalDate.parse(oneTimeDate) }.getOrNull()
-            if (parsed != null && parsed.isBefore(LocalDate.now())) {
+            val updates = mutableMapOf<String, Any>()
+
+            if (parsed != null) {
+                if (parsed.isBefore(LocalDate.now())) {
+                    // Дата уже прошла — выключаем привычку
+                    updates["status"] = "off"
+                } else {
+                    // Дата ещё впереди — сразу ставим nextDueDate и сбрасываем completedToday
+                    updates["nextDueDate"]    = parsed.format(isoFmt)
+                    updates["completedToday"] = false
+                }
+            }
+
+            if (updates.isNotEmpty()) {
                 db.collection("habits")
                     .document(habitId)
-                    .update("status", "off")
+                    .update(updates)
             }
             return@forEach
         }

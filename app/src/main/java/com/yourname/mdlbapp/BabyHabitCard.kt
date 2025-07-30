@@ -55,9 +55,8 @@ fun BabyHabitCard(habit: Map<String, Any>) {
     val reportType = habit["reportType"] as? String ?: "none"
     val dailyTarget = 1
 
-    // Локальный стейт, чтобы UI сразу реагировал
-    var completed by remember { mutableStateOf(habit["completedToday"] as? Boolean ?: false) }
-    var streak by remember { mutableStateOf((habit["currentStreak"] as? Long ?: 0L).toInt()) }
+    val completed   = habit["completedToday"] as? Boolean ?: false
+    val streak = (habit["currentStreak"] as? Long ?: 0L).toInt()
 
     // Цвета и модификаторы…
     val CardBorderColor = Color(0xFFE0C2BD)
@@ -78,7 +77,7 @@ fun BabyHabitCard(habit: Map<String, Any>) {
 
 
 
-    val scheduledStr = habit["dueDate"] as? String   // e.g. "2025-07-28"
+    val scheduledStr = habit["nextDueDate"] as? String
     val scheduledDate = runCatching {
         LocalDate.parse(scheduledStr, DateTimeFormatter.ISO_DATE)
     }.getOrNull()
@@ -190,9 +189,6 @@ fun BabyHabitCard(habit: Map<String, Any>) {
                             modifier = Modifier
                                 .size(20.dp)
                                 .clickable {
-                                    // только сюда переходит, если canComplete == true
-                                    completed = true
-                                    streak += 1
                                     Firebase
                                         .firestore
                                         .collection("habits")
@@ -200,7 +196,7 @@ fun BabyHabitCard(habit: Map<String, Any>) {
                                         .update(
                                             mapOf(
                                                 "completedToday" to true,
-                                                "currentStreak" to streak.toLong()
+                                                "currentStreak"    to (streak + 1).toLong()
                                             )
                                         )
                                 }
