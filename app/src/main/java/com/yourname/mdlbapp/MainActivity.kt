@@ -133,6 +133,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import com.yourname.mdlbapp.changePointsAsync
+import com.yourname.mdlbapp.changePoints
 import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.LocalTime
@@ -145,6 +147,9 @@ import java.util.concurrent.TimeUnit
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.yourname.mdlbapp.HabitUpdateScheduler
+import com.yourname.mdlbapp.Reward
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.Card
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -252,6 +257,10 @@ class MainActivity : ComponentActivity() {
                         }
                         composable("baby_rules") {
                             BabyRulesScreen(navController)
+                        }
+                        // Магазин наград для малыша
+                        composable("baby_rewards") {
+                            BabyRewardsScreen(navController)
                         }
                         composable("create_rule") {
                             val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -770,8 +779,10 @@ class MainActivity : ComponentActivity() {
                 .clickable {
                     if (label.contains("Правила")) {
                         navController.navigate("baby_rules")
-                    }else if (label.contains("привычки", ignoreCase = true)) {
+                    } else if (label.contains("привычки", ignoreCase = true)) {
                         navController.navigate("baby_habits")
+                    } else if (label.contains("Поощрения")) {
+                        navController.navigate("baby_rewards")
                     }
                 }
                 .padding(horizontal = 16.dp),
@@ -903,6 +914,210 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally),
             color = Color.DarkGray
         )
+    }
+}
+
+// ===================== BABY REWARDS SCREEN =============================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BabyRewardsScreen(navController: NavHostController) {
+    val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+    val rewards = remember { mutableStateListOf<Reward>() }
+    var totalPoints by remember { mutableStateOf(0) }
+
+    LaunchedEffect(babyUid) {
+        Firebase.firestore
+            .collection("rewards")
+            .whereEqualTo("targetUid", babyUid)
+            .addSnapshotListener { snap, _ ->
+                rewards.clear()
+                snap?.documents
+                    ?.mapNotNull { it.toObject(Reward::class.java)?.apply { id = it.id } }
+                    ?.let { rewards.addAll(it) }
+            }
+    }
+
+    LaunchedEffect(babyUid) {
+        Firebase.firestore
+            .collection("points")
+            .document(babyUid)
+            .addSnapshotListener { snap, _ ->
+                totalPoints = snap?.getLong("totalPoints")?.toInt() ?: 0
+            }
+    }
+
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF8EDE6))
+            .padding(12.dp)
+    ) {
+        TopAppBar(
+            title = { Text("Магазин Ласки", fontSize = 26.sp, fontStyle = FontStyle.Italic) },
+            navigationIcon = {
+                IconButton(onClick = { navController.popBackStack() }) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Назад")
+                }
+            },
+            actions = {},
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFFF8EDE6))
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFFFFF4E8), RoundedCornerShape(12.dp))
+                .border(1.dp, Color(0xFFD9B99B), RoundedCornerShape(12.dp))
+                .padding(12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Всего баллов: $totalPoints 🪙",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF552216)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(rewards) { reward ->
+                BabyRewardCard(
+                    reward = reward,
+                    totalPoints = totalPoints,
+                    babyUid = babyUid,
+                    onBuy = { selectedReward ->
+                        if (totalPoints >= selectedReward.cost) {
+                            scope.launch {
+                                try {
+                                    changePoints(babyUid, -selectedReward.cost)
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Не удалось списать баллы", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } else {
+                            Toast.makeText(context, "Недостаточно баллов для покупки", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "Выбери награду, когда будет достаточно баллов",
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+            fontSize = 16.sp,
+            fontStyle = FontStyle.Italic,
+            color = Color(0xFF552216)
+        )
+    }
+}
+
+@Composable
+fun BabyRewardCard(
+    reward: Reward,
+    totalPoints: Int,
+    babyUid: String,
+    onBuy: (Reward) -> Unit
+) {
+    val canAfford = totalPoints >= reward.cost
+    val isPending = reward.pending && reward.pendingBy == babyUid
+    // Box с общей стилистикой, совпадающей с картой Мамочки
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0xFFDEBEB5), RoundedCornerShape(12.dp))
+            .background(Color(0xFFFDF2EC), RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = reward.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        color = Color(0xFF552216)
+                    )
+                    Text(
+                        text = "${reward.cost} баллов • ${reward.type}",
+                        fontSize = 16.sp,
+                        color = Color(0xFF552216),
+                        fontStyle = FontStyle.Italic
+                    )
+                }
+
+                // Показываем кнопку или статус ожидания
+                if (isPending) {
+                    Text(
+                        text = "Ожидает подтверждения",
+                        color = Color.Red,
+                        fontStyle = FontStyle.Italic,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                } else {
+                    Button(
+                        onClick = {
+                            // Покупка: если авто-подтверждение, просто списываем баллы. Иначе выставляем pending.
+                            onBuy(reward)
+                            if (!reward.autoApprove) {
+                                reward.id?.let { rid ->
+                                    val updates = mapOf(
+                                        "pending" to true,
+                                        "pendingBy" to babyUid
+                                    )
+                                    Firebase.firestore.collection("rewards").document(rid).update(updates)
+                                }
+                            }
+                        },
+                        enabled = canAfford,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (canAfford) Color(0xFFF5D8CE) else Color(0xFFDFDFDF)
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = if (canAfford) "Купить" else "Нет баллов",
+                            color = Color(0xFF552216),
+                            fontStyle = FontStyle.Italic
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = reward.description,
+                fontSize = 18.sp,
+                color = Color(0xFF4A3C36),
+                fontStyle = FontStyle.Italic
+            )
+
+            if (reward.messageFromMommy.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Сообщение: ${'$'}{reward.messageFromMommy}",
+                    fontSize = 14.sp,
+                    color = Color(0xFF795548),
+                    fontStyle = FontStyle.Italic
+                )
+            }
+        }
     }
 }
 
@@ -1893,8 +2108,18 @@ fun updateHabitsNextDueDate(
         }
 
         // если предыдущий due-дата уже в прошлом и не была выполнена — сбрасываем серию
+        // и применяем штраф к общему счёту малыша
         if (oldDate != null && oldDate.isBefore(fromDate) && !completed) {
             updates["currentStreak"] = 0L
+            val babyUid   = habit["babyUid"] as? String
+            val penaltyVal = (habit["penalty"] as? Long ?: 0L).toInt()
+            if (babyUid != null && penaltyVal != 0) {
+                try {
+                    changePointsAsync(babyUid, penaltyVal)
+                } catch (_: Exception) {
+                    // ошибки игнорируем
+                }
+            }
         }
 
         // если есть что обновлять — шлём в Firebase
@@ -2580,9 +2805,9 @@ fun CreateHabitScreen(navController: NavController) {
                                 }
                             }
                         },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF5D8CE)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF5D8CE)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
                         Text("Да")
                     }
                 },
@@ -3381,10 +3606,11 @@ fun RewardsListScreen(navController: NavController) {
 
     // 2) Подгружаем список наград как раньше
     LaunchedEffect(mommyUid) {
+        // Получаем список наград, созданных Мамочкой. Отказались от сортировки по createdAt,
+        // так как комбинация whereEqualTo + orderBy требует индекса в Firestore, которого может не быть.
         Firebase.firestore
             .collection("rewards")
             .whereEqualTo("createdBy", mommyUid)
-            .orderBy("createdAt")
             .addSnapshotListener { snap, _ ->
                 rewards.clear()
                 snap?.documents
@@ -3478,7 +3704,34 @@ fun RewardsListScreen(navController: NavController) {
                     onEdit = { navController.navigate("edit_reward/${reward.id}") },
                     onDelete = {
                         reward.id?.let { Firebase.firestore.collection("rewards").document(it).delete() }
-                    }
+                    },
+                    onApprove = if (reward.pending) {
+                        {
+                            reward.id?.let { rid ->
+                                val updates = mapOf(
+                                    "pending" to false,
+                                    "pendingBy" to null
+                                )
+                                Firebase.firestore.collection("rewards").document(rid).update(updates)
+                            }
+                        }
+                    } else null,
+                    onReject = if (reward.pending) {
+                        {
+                            // Возврат баллов малышу
+                            val bUid = reward.pendingBy
+                            if (bUid != null) {
+                                changePointsAsync(bUid, reward.cost)
+                            }
+                            reward.id?.let { rid ->
+                                val updates = mapOf(
+                                    "pending" to false,
+                                    "pendingBy" to null
+                                )
+                                Firebase.firestore.collection("rewards").document(rid).update(updates)
+                            }
+                        }
+                    } else null
                 )
             }
         }
@@ -3491,7 +3744,7 @@ fun RewardsListScreen(navController: NavController) {
                 .fillMaxWidth()
                 .height(56.dp)
         ) {
-            Text("＋ Новая награда", fontSize = 20.sp, fontStyle = FontStyle.Italic)
+            Text("＋ Новая награда", fontSize = 20.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold, color = Color(0xFF552216))
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -3507,7 +3760,13 @@ fun RewardsListScreen(navController: NavController) {
 }
 
 @Composable
-fun RewardCard(reward: Reward, onEdit: () -> Unit, onDelete: () -> Unit) {
+fun RewardCard(
+    reward: Reward,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onApprove: (() -> Unit)? = null,
+    onReject: (() -> Unit)? = null
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -3516,6 +3775,7 @@ fun RewardCard(reward: Reward, onEdit: () -> Unit, onDelete: () -> Unit) {
             .padding(12.dp)
     ) {
         Column {
+            // Заголовок и стоимость
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -3534,18 +3794,21 @@ fun RewardCard(reward: Reward, onEdit: () -> Unit, onDelete: () -> Unit) {
                         fontStyle = FontStyle.Italic
                     )
                 }
-
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_close),
-                        contentDescription = "Удалить",
-                        tint = Color(0xFF552216)
-                    )
+                // Кнопка удаления доступна только если нет ожидающей заявки
+                if (!reward.pending) {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_close),
+                            contentDescription = "Удалить",
+                            tint = Color(0xFF552216)
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
 
+            // Описание
             Text(
                 text = reward.description,
                 fontSize = 18.sp,
@@ -3553,19 +3816,70 @@ fun RewardCard(reward: Reward, onEdit: () -> Unit, onDelete: () -> Unit) {
                 fontStyle = FontStyle.Italic
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            // Если есть сообщение от Мамочки – показываем его
+            if (reward.messageFromMommy.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Сообщение: ${'$'}{reward.messageFromMommy}",
+                    fontSize = 14.sp,
+                    color = Color(0xFF795548),
+                    fontStyle = FontStyle.Italic
+                )
+            }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = onEdit) {
-                    Text(
-                        text = "Изменить",
-                        color = Color(0xFF552216),
-                        fontSize = 16.sp,
-                        fontStyle = FontStyle.Italic
-                    )
+            // Если награда ожидает подтверждения
+            if (reward.pending && reward.pendingBy != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Запрос от малыша",
+                    fontSize = 14.sp,
+                    color = Color.Red,
+                    fontStyle = FontStyle.Italic
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                // Кнопки подтверждения и отказа
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (onApprove != null) {
+                        Button(
+                            onClick = onApprove,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE0C3B1)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Подтвердить", color = Color(0xFF552216))
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    if (onReject != null) {
+                        OutlinedButton(
+                            onClick = onReject,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE0C3B1))
+                        ) {
+                            Text(
+                                text = "Отказать",
+                                color = Color(0xFF552216),
+                                fontStyle = FontStyle.Italic
+                            )
+                        }
+                    }
+                }
+            } else {
+                // Если нет заявки – кнопка редактирования
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onEdit) {
+                        Text(
+                            text = "Изменить",
+                            color = Color(0xFF552216),
+                            fontSize = 16.sp,
+                            fontStyle = FontStyle.Italic
+                        )
+                    }
                 }
             }
         }
@@ -3735,7 +4049,12 @@ fun CreateRewardScreen(
             shape = RoundedCornerShape(12.dp),
             enabled = !isSaving
         ) {
-            Text(if (isSaving) "Сохранение…" else "Сохранить награду")
+            Text(
+                if (isSaving) "Сохранение…" else "Сохранить награду",
+                fontSize = 18.sp,
+                color = Color(0xFF53291E),
+                fontWeight = FontWeight.SemiBold
+            )
         }
 
         errorMessage?.let { msg ->

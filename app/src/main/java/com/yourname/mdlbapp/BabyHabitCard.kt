@@ -44,6 +44,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.yourname.mdlbapp.changePoints
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -85,6 +88,9 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
 
     // Считаем, можно ли выполнить
     val canComplete = !completed && beforeDeadline && isToday
+
+    // Для начисления баллов используем coroutineScope
+    val scope = rememberCoroutineScope()
 
     Box(
         modifier = Modifier
@@ -198,7 +204,19 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
                                         .document(habitId)
                                         .update(updates)
                                         .addOnSuccessListener {
-                                            // как только апдейт успешен — зовём коллбэк
+                                            // начисляем баллы малышу
+                                            val babyUid  = habit["babyUid"] as? String
+                                            val pointVal = (habit["points"] as? Long ?: 0L).toInt()
+                                            if (babyUid != null && pointVal != 0) {
+                                                scope.launch {
+                                                    try {
+                                                        changePoints(babyUid, pointVal)
+                                                    } catch (_: Exception) {
+                                                        // игнорируем ошибки начисления
+                                                    }
+                                                }
+                                            }
+                                            // вызываем коллбэк для реакции
                                             onCompleted()
                                         }
                                 }
