@@ -925,10 +925,28 @@ fun BabyRewardsScreen(navController: NavHostController) {
     val rewards = remember { mutableStateListOf<Reward>() }
     var totalPoints by remember { mutableStateOf(0) }
 
-    LaunchedEffect(babyUid) {
+    // Состояние для UID Мамочки. Он понадобится для фильтрации наград, чтобы
+    // малыш видел только награды, созданные текущей Мамочкой.
+    var mommyUid by remember { mutableStateOf<String?>(null) }
+
+    // Загружаем UID Мамочки из документа пользователя малыша
+    LaunchedEffect(Unit) {
+        Firebase.firestore
+            .collection("users")
+            .document(babyUid)
+            .get()
+            .addOnSuccessListener { doc ->
+                mommyUid = doc.getString("pairedWith")
+            }
+    }
+
+    // Подписываемся на награды только после получения mommyUid
+    LaunchedEffect(mommyUid) {
+        val mUid = mommyUid ?: return@LaunchedEffect
         Firebase.firestore
             .collection("rewards")
             .whereEqualTo("targetUid", babyUid)
+            .whereEqualTo("createdBy", mUid)
             .addSnapshotListener { snap, _ ->
                 rewards.clear()
                 snap?.documents
@@ -937,6 +955,7 @@ fun BabyRewardsScreen(navController: NavHostController) {
             }
     }
 
+    // Подписка на баланс очков малыша
     LaunchedEffect(babyUid) {
         Firebase.firestore
             .collection("points")
@@ -1125,18 +1144,32 @@ fun BabyRewardCard(
 fun BabyRulesScreen(navController: NavHostController) {
     val rules = remember { mutableStateListOf<Rule>() }
 
-    // 🔄 Подписка на обновления правил от Мамочки
+    // UID Мамочки для фильтрации правил
+    var mommyUid by remember { mutableStateOf<String?>(null) }
+
+    // 1) Подгружаем UID Мамочки из документа малыша
     LaunchedEffect(Unit) {
         val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+        Firebase.firestore.collection("users").document(babyUid).get()
+            .addOnSuccessListener { doc ->
+                mommyUid = doc.getString("pairedWith")
+            }
+    }
+
+    // 2) Подписка на обновления правил от текущей Мамочки
+    LaunchedEffect(mommyUid) {
+        val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+        val mUid = mommyUid ?: return@LaunchedEffect
         Firebase.firestore.collection("rules")
             .whereEqualTo("targetUid", babyUid)
+            .whereEqualTo("createdBy", mUid)
             .orderBy("createdAt")
             .addSnapshotListener { snapshots, error ->
                 if (error != null) return@addSnapshotListener
                 rules.clear()
                 snapshots?.documents?.forEach { doc ->
                     val rule = doc.toObject(Rule::class.java)
-                    rule?.id = doc.id  // вот здесь вручную вставляем ID
+                    rule?.id = doc.id
                     if (rule != null) {
                         rules.add(rule)
                     }
@@ -2965,11 +2998,25 @@ fun BabyHabitsScreen(navController: NavController) {
     var earnedPoints      by remember { mutableStateOf(0) }
 
 
-    // 🔄 Подгружаем привычки, выданные Мамочкой
+    // UID Мамочки для фильтрации привычек
+    var mommyUid by remember { mutableStateOf<String?>(null) }
+
+    // 1) Загрузка UID Мамочки из документа пользователя малыша
     LaunchedEffect(Unit) {
         val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+        Firebase.firestore.collection("users").document(babyUid).get()
+            .addOnSuccessListener { doc ->
+                mommyUid = doc.getString("pairedWith")
+            }
+    }
+
+    // 2) Подгружаем привычки, выданные текущей Мамочкой
+    LaunchedEffect(mommyUid) {
+        val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+        val mUid = mommyUid ?: return@LaunchedEffect
         Firebase.firestore.collection("habits")
             .whereEqualTo("babyUid", babyUid)
+            .whereEqualTo("mommyUid", mUid)
             .whereEqualTo("status", "on")
             .addSnapshotListener { snapshots, error ->
                 if (error != null) return@addSnapshotListener

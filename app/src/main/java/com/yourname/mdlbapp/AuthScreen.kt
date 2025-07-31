@@ -13,6 +13,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
+import com.google.firebase.firestore.SetOptions
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +46,18 @@ fun AuthScreen(
     val context = LocalContext.current
     var selectedRole by remember { mutableStateOf(preselectedRole) }
 
+    // Флаги для переключения между режимами: логин или регистрация
+    var isRegistering by remember { mutableStateOf(false) }
+
+    // Поля ввода
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+
+    // Сообщения об ошибках / процессе
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+
+    // Google auth launcher
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -54,20 +72,122 @@ fun AuthScreen(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Подтверди вход как $selectedRole", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        // Заголовок: меняем текст в зависимости от режима
+        Text(
+            text = if (isRegistering) "Регистрация ($selectedRole)" else "Вход ($selectedRole)",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
-        Button(onClick = {
-            val signInClient = getGoogleSignInClient(context)
+        // Email
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("Email") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Email)
+        )
 
-            signInClient.signOut().addOnCompleteListener {
-                val intent = signInClient.signInIntent
-                launcher.launch(intent)
-            }
-        }) {
-            Text("Войти через Google как $selectedRole")
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Пароль
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Пароль") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Password),
+            visualTransformation = PasswordVisualTransformation()
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Кнопка входа/регистрации
+        Button(
+            onClick = {
+                errorMessage = null
+                if (email.isBlank() || password.isBlank()) {
+                    errorMessage = if (isRegistering) "Заполните email и пароль" else "Введите email и пароль"
+                    return@Button
+                }
+                isLoading = true
+                val auth = FirebaseAuth.getInstance()
+                if (isRegistering) {
+                    // Регистрация по email
+                    auth.createUserWithEmailAndPassword(email, password)
+                        .addOnCompleteListener { task ->
+                            isLoading = false
+                            if (task.isSuccessful) {
+                                val user = task.result?.user
+                                if (user != null) {
+                                    // Сохраняем данные пользователя: роль и часовой пояс (merge сохраняет pairedWith)
+                                    saveUserToFirestore(user.uid, selectedRole)
+                                    checkPairingAndNavigate(user.uid, selectedRole, navController)
+                                }
+                            } else {
+                                errorMessage = task.exception?.localizedMessage ?: "Ошибка регистрации"
+                            }
+                        }
+                } else {
+                    // Вход по email
+                    auth.signInWithEmailAndPassword(email, password)
+                        .addOnCompleteListener { task ->
+                            isLoading = false
+                            if (task.isSuccessful) {
+                                val user = task.result?.user
+                                if (user != null) {
+                                    checkPairingAndNavigate(user.uid, selectedRole, navController)
+                                }
+                            } else {
+                                errorMessage = task.exception?.localizedMessage ?: "Ошибка входа"
+                            }
+                        }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading
+        ) {
+            Text(if (isRegistering) "Зарегистрироваться" else "Войти")
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Кнопка для Google входа только в режиме входа
+        if (!isRegistering) {
+            Button(
+                onClick = {
+                    errorMessage = null
+                    val signInClient = getGoogleSignInClient(context)
+                    signInClient.signOut().addOnCompleteListener {
+                        val intent = signInClient.signInIntent
+                        launcher.launch(intent)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading
+            ) {
+                Text("Войти через Google")
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Сообщение об ошибке
+        errorMessage?.let { msg ->
+            Text(msg, color = Color.Red, modifier = Modifier.padding(8.dp))
+        }
+
+        // Ссылка переключения между режимами
+        Text(
+            text = if (isRegistering) "Уже есть аккаунт? Войти" else "Зарегистрироваться",
+            color = Color.Blue,
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .clickable { isRegistering = !isRegistering },
+            fontSize = 16.sp
+        )
     }
 }
 
@@ -133,11 +253,10 @@ fun checkPairingAndNavigate(
 }
 
 fun saveUserToFirestore(uid: String, role: String) {
-    val db = Firebase.firestore
+    // Сохраняем/обновляем только роль и часовой пояс, оставляя другие поля (например, pairedWith) без изменений.
     val data = mapOf(
-        "role"       to role,
-        "pairedWith" to null,
-        "timezone"   to ZoneId.systemDefault().id
+        "role"     to role,
+        "timezone" to ZoneId.systemDefault().id
     )
-    db.collection("users").document(uid).set(data)
+    Firebase.firestore.collection("users").document(uid).set(data, SetOptions.merge())
 }
