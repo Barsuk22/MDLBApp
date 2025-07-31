@@ -30,6 +30,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import java.time.ZoneId
 
 @Composable
 fun AuthScreen(
@@ -134,8 +135,9 @@ fun checkPairingAndNavigate(
 fun saveUserToFirestore(uid: String, role: String) {
     val db = Firebase.firestore
     val data = mapOf(
-        "role" to role,
-        "pairedWith" to null
+        "role"       to role,
+        "pairedWith" to null,
+        "timezone"   to ZoneId.systemDefault().id
     )
     db.collection("users").document(uid).set(data)
 }
