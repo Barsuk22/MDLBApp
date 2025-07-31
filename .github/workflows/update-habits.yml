@@ -1,0 +1,14 @@
+name: Update Habits Daily
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+
+jobs:
+  trigger-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Firebase Function
+        run: |
+          curl -X GET \
+            "https://us-central1-<mdlbapp>.cloudfunctions.net/updateHabits?secret=${{ secrets.HABITS_SECRET }}"
