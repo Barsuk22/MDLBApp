@@ -12,4 +12,4 @@ jobs:
       - name: Call Firebase Function
         run: |
           curl -X GET \
-            "https://us-central1-<mdlbapp>.cloudfunctions.net/updateHabits?secret=${{ secrets.HABITS_SECRET }}"
+            "https://us-central1-mdlbapp.cloudfunctions.net/updateHabits?secret=${{ secrets.HABITS_SECRET }}"
