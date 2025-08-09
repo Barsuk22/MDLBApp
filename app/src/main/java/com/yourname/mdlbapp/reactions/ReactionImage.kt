@@ -1,4 +1,4 @@
-package com.yourname.mdlbapp
+package com.yourname.mdlbapp.reactions
 
 import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Composable

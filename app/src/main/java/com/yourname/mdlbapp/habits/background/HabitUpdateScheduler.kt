@@ -1,16 +1,11 @@
-package com.yourname.mdlbapp
+package com.yourname.mdlbapp.habits.background
 
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import java.time.Duration
-import java.time.LocalDateTime
 import java.util.Calendar
-import java.util.concurrent.TimeUnit
 import android.provider.Settings
 
 
@@ -61,7 +56,7 @@ object HabitUpdateScheduler {
                 // а пользователю показываем, как дать право, только если он сам захочет:
                 // (опционально вызывайте это из UI, а не автоматически)
                 val settings = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                    .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+                    .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                 context.startActivity(settings)
             }
         } else {

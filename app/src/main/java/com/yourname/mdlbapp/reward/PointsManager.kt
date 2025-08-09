@@ -1,4 +1,4 @@
-package com.yourname.mdlbapp
+package com.yourname.mdlbapp.reward
 
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions

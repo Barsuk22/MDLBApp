@@ -1,4 +1,4 @@
-package com.yourname.mdlbapp
+package com.yourname.mdlbapp.core
 
 import android.content.BroadcastReceiver
 import android.content.Context

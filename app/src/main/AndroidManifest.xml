@@ -29,7 +29,7 @@
         </activity>
 
         <receiver
-            android:name=".HabitAlarmReceiver"
+            android:name=".habits.background.HabitAlarmReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
@@ -40,7 +40,7 @@
         </receiver>
 
         <receiver
-            android:name=".TimezoneChangedReceiver"
+            android:name=".core.TimezoneChangedReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.TIMEZONE_CHANGED"/>

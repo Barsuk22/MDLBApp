@@ -1,4 +1,4 @@
-package com.yourname.mdlbapp
+package com.yourname.mdlbapp.habits.background
 
 import android.content.Context
 import android.util.Log
@@ -7,6 +7,7 @@ import androidx.work.WorkerParameters
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import com.yourname.mdlbapp.updateHabitsNextDueDate
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDateTime
 

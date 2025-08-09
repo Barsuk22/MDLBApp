@@ -1,4 +1,4 @@
-package com.yourname.mdlbapp
+package com.yourname.mdlbapp.reward
 
 data class Reward(
     val title: String = "",

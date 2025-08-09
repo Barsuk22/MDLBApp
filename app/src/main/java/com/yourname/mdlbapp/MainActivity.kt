@@ -7,12 +7,9 @@ import java.time.format.DateTimeFormatter
 import android.app.TimePickerDialog
 import android.content.Context
 import androidx.compose.foundation.layout.FlowRow
-import com.yourname.mdlbapp.RulesListScreen
-import com.yourname.mdlbapp.Rule
 import androidx.compose.runtime.*
 import androidx.compose.foundation.BorderStroke
 import android.os.Bundle
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -32,8 +29,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -42,12 +37,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -64,7 +57,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
@@ -74,12 +66,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -90,8 +80,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -106,7 +94,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
@@ -120,36 +107,38 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.work.ExistingPeriodicWorkPolicy
-import com.google.android.play.integrity.internal.e
-import com.google.firebase.BuildConfig
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.yourname.mdlbapp.ui.theme.MDLBAppTheme
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
-import com.yourname.mdlbapp.changePointsAsync
-import com.yourname.mdlbapp.changePoints
 import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.LocalTime
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import java.time.LocalDateTime
-import java.time.Duration
-import java.util.concurrent.TimeUnit
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
-import com.yourname.mdlbapp.HabitUpdateScheduler
-import com.yourname.mdlbapp.Reward
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.material3.Card
+import com.yourname.mdlbapp.authorization.AuthScreen
+import com.yourname.mdlbapp.authorization.PairCodeScreenBaby
+import com.yourname.mdlbapp.authorization.PairCodeScreenMommy
+import com.yourname.mdlbapp.authorization.RoleSelectionScreen
+import com.yourname.mdlbapp.core.Constants
+import com.yourname.mdlbapp.habits.BabyHabitCard
+import com.yourname.mdlbapp.habits.background.HabitUpdateScheduler
+import com.yourname.mdlbapp.habits.MommyHabitCard
+import com.yourname.mdlbapp.reactions.ReactionImage
+import com.yourname.mdlbapp.reactions.ReactionOverlay
+import com.yourname.mdlbapp.reward.Reward
+import com.yourname.mdlbapp.reward.changePoints
+import com.yourname.mdlbapp.reward.changePointsAsync
+import com.yourname.mdlbapp.rule.Rule
+import com.yourname.mdlbapp.rule.RuleCard
+import com.yourname.mdlbapp.rule.RulesListScreen
+import com.yourname.mdlbapp.rule.computeNextDueDateForHabit
+import com.yourname.mdlbapp.rule.getNextDueDate
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -326,102 +315,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
-        }
-    }
-
-
-
-    @Composable
-    fun RoleSelectionScreen(navController: NavHostController) {
-        val backgroundColor = Color(0xFFF8EDE6)
-        val cardColor = Color(0xFFFFEBEE)
-        val textColor = Color.Black
-
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = backgroundColor
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 32.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Выбери положение!",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = textColor
-                )
-
-                Spacer(modifier = Modifier.height(40.dp))
-
-                RoleButton(
-                    iconId = R.drawable.ic_mommy,
-                    text = "Я мамочка!",
-                    color = cardColor
-                ) {
-                    navController.navigate("auth_mommy")
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                RoleButton(
-                    iconId = R.drawable.ic_baby,
-                    text = "Я малыш!!!!",
-                    color = cardColor
-                ) {
-                    navController.navigate("auth_baby") // 🔄 и сюда
-                }
-            }
-        }
-    }
-
-    //ВЫБОР РОЛИ------------------------------------------------
-    @Composable
-    fun RoleButton(
-        iconId: Int,
-        text: String,
-        color: Color,
-        onClick: () -> Unit
-    ) {
-        val screenWidth = LocalConfiguration.current.screenWidthDp
-        val iconDpSize = (screenWidth * 0.15f).dp  // 🔹 Иконка занимает 15% ширины экрана
-
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            shadowElevation = 8.dp,
-            color = color,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height((iconDpSize.value + 30).dp) // адаптивная высота
-                .clickable { onClick() }
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 24.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                ) {
-                    Image(
-                        painter = painterResource(id = iconId),
-                        contentDescription = null,
-                        modifier = Modifier.size(iconDpSize * 0.99f) // сама иконка внутри круга
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(20.dp))
-
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = (iconDpSize.value * 0.55).sp // текст тоже адаптивный
-                    )
-                )
             }
         }
     }
@@ -2121,12 +2014,12 @@ fun updateHabitsNextDueDate(
         }
 
         val newDueDate = computeNextDueDateForHabit(
-            repeatMode  = repeat,
-            daysOfWeek  = daysOfWeek,
+            repeatMode = repeat,
+            daysOfWeek = daysOfWeek,
             oneTimeDate = oneTimeDate,
-            deadline    = deadlineStr,
-            fromDate    = fromDate,
-            nowTime     = nowTime
+            deadline = deadlineStr,
+            fromDate = fromDate,
+            nowTime = nowTime
         ) ?: return@forEach
 
         val oldDateStr = habit["nextDueDate"] as? String
@@ -2909,10 +2802,10 @@ fun saveHabit(
     // Вычисляем nextDueDate через единую функцию
     val nextDueDate = if (status == "on") {
         getNextDueDate(
-            repeatMode  = repeat,
-            daysOfWeek  = if (repeat == "weekly") selectedDays else null,
+            repeatMode = repeat,
+            daysOfWeek = if (repeat == "weekly") selectedDays else null,
             oneTimeDate = oneTimeIso,
-            deadline    = deadlineString
+            deadline = deadlineString
         ) ?: run {
             onComplete(false, "Не удалось определить дату следующего выполнения.")
             return
@@ -3102,13 +2995,14 @@ fun BabyHabitsScreen(navController: NavController) {
                                 habit = habit,
                                 onCompleted = {
                                     // 1) Преобразуем res из Long (Firestore) в Int
-                                    reactionImageRes = (habit["reactionImageRes"] as? Long ?: 0L).toInt()
+                                    reactionImageRes =
+                                        (habit["reactionImageRes"] as? Long ?: 0L).toInt()
                                     // 2) Текст реакции — в поле "reaction" (или "reactionMessage", смотрите, как назвали вы)
-                                    reactionMessage  = (habit["reaction"] as? String) ?: ""
+                                    reactionMessage = (habit["reaction"] as? String) ?: ""
                                     // 3) Баллы
-                                    earnedPoints     = (habit["points"] as? Long ?: 1L).toInt()
+                                    earnedPoints = (habit["points"] as? Long ?: 1L).toInt()
                                     // 4) Показываем оверлей
-                                    showReaction     = true
+                                    showReaction = true
                                 }
                             )
                         }
@@ -3122,9 +3016,9 @@ fun BabyHabitsScreen(navController: NavController) {
             exit    = fadeOut(animationSpec = tween(durationMillis = 500))
         ) {
             ReactionOverlay(
-                resId   = reactionImageRes!!,
+                resId = reactionImageRes!!,
                 message = reactionMessage,
-                points  = earnedPoints
+                points = earnedPoints
             ) {
                 showReaction = false  // тоже можно тапом закрывать
             }
