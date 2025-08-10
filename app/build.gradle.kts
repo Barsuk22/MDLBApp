@@ -7,11 +7,11 @@ plugins {
 apply(plugin = "com.google.gms.google-services")
 
 android {
-    namespace = "com.yourname.mdlbapp"
+    namespace = "com.app.mdlbapp"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.yourname.mdlbapp"
+        applicationId = "com.app.mdlbapp"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
