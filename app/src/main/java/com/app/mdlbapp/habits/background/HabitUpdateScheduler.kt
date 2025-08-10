@@ -55,9 +55,9 @@ object HabitUpdateScheduler {
                 )
                 // а пользователю показываем, как дать право, только если он сам захочет:
                 // (опционально вызывайте это из UI, а не автоматически)
-                val settings = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                    .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                context.startActivity(settings)
+//                val settings = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+//                    .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+//                context.startActivity(settings)
             }
         } else {
             // для старых Android — точный без проблем
