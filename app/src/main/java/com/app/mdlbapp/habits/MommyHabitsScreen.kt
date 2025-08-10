@@ -317,7 +317,6 @@ fun HabitsScreen(navController: NavController) {
                 }
             }
         }
-        if (BuildConfig.DEBUG) HabitUpdateScheduler.scheduleNextInOneMinute(context)
     }
 
 }

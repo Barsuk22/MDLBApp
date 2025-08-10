@@ -46,6 +46,11 @@
                 <action android:name="android.intent.action.TIMEZONE_CHANGED"/>
             </intent-filter>
         </receiver>
+
+        <!-- Будильник на момент дедлайна привычки -->
+        <receiver
+            android:name=".habits.background.HabitDeadlineReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

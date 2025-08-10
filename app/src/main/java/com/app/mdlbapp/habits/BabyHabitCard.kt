@@ -21,32 +21,31 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.firebase.firestore.ktx.firestore
-import com.google.firebase.ktx.Firebase
-import androidx.compose.runtime.rememberCoroutineScope
 import com.app.mdlbapp.R
+import com.app.mdlbapp.core.ui.theme.Tokens
+import com.app.mdlbapp.habits.background.HabitDeadlineScheduler
+import com.app.mdlbapp.habits.data.AtomicUpdates
 import kotlinx.coroutines.launch
-import com.app.mdlbapp.reward.changePoints
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import androidx.compose.material3.MaterialTheme
-import com.app.mdlbapp.core.ui.theme.Tokens
-import androidx.compose.ui.res.stringResource
 
 @Composable
 fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
-    val habitId = habit["id"] as? String ?: return
     val title = habit["title"] as? String ?: "Без названия"
     val reportType = habit["reportType"] as? String ?: "none"
     val dailyTarget = 1
@@ -84,6 +83,8 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
 
     // Для начисления баллов используем coroutineScope
     val scope = rememberCoroutineScope()
+
+    val ctx = LocalContext.current
 
     Box(
         modifier = Modifier
@@ -187,31 +188,15 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
                             modifier = Modifier
                                 .size(20.dp)
                                 .clickable {
-                                    val updates = mutableMapOf<String, Any>(
-                                        "completedToday" to true,
-                                        "currentStreak"  to (streak + 1).toLong()
-                                    )
-                                    Firebase
-                                        .firestore
-                                        .collection("habits")
-                                        .document(habitId)
-                                        .update(updates)
-                                        .addOnSuccessListener {
-                                            // начисляем баллы малышу
-                                            val babyUid  = habit["babyUid"] as? String
-                                            val pointVal = (habit["points"] as? Long ?: 0L).toInt()
-                                            if (babyUid != null && pointVal != 0) {
-                                                scope.launch {
-                                                    try {
-                                                        changePoints(babyUid, pointVal)
-                                                    } catch (_: Exception) {
-                                                        // игнорируем ошибки начисления
-                                                    }
-                                                }
-                                            }
-                                            // вызываем коллбэк для реакции
+                                    // одно нажатие — одна транзакция на сервере
+                                    scope.launch {
+                                        val ok = AtomicUpdates.completeHabitAtomically(habit)
+                                        if (ok) {
                                             onCompleted()
+                                            // 📴 сняли будильничек на дедлайн этой привычки — раз уже выполнено
+                                            (habit["id"] as? String)?.let { HabitDeadlineScheduler.cancelForHabit(ctx, it) }
                                         }
+                                    }
                                 }
                         )
                     } else {

@@ -46,6 +46,7 @@ import com.app.mdlbapp.core.ui.theme.Tokens
 import androidx.compose.ui.res.stringResource
 import com.app.mdlbapp.R
 import androidx.compose.runtime.DisposableEffect
+import com.app.mdlbapp.habits.background.HabitDeadlineScheduler
 
 @Composable
 fun BabyHabitsScreen(navController: NavController) {
@@ -58,13 +59,12 @@ fun BabyHabitsScreen(navController: NavController) {
     val backgroundColor = MaterialTheme.colorScheme.background
     val textColorMain = MaterialTheme.colorScheme.onBackground
 
-    val context = LocalContext.current
-
     var showReaction      by remember { mutableStateOf(false) }
     var reactionImageRes  by remember { mutableStateOf<Int?>(null) }
     var reactionMessage   by remember { mutableStateOf("") }
     var earnedPoints      by remember { mutableStateOf(0) }
 
+    val ctx = LocalContext.current
 
     // UID Мамочки для фильтрации привычек
     var mommyUid by remember { mutableStateOf<String?>(null) }
@@ -95,16 +95,18 @@ fun BabyHabitsScreen(navController: NavController) {
                     if (error != null) return@addSnapshotListener
                     habits.clear()
                     snapshots?.documents?.forEach { doc ->
-                        val data = doc.data
-                        if (data != null) {
-                            habits.add(data + ("id" to doc.id))
-                        }
+                        val data = doc.data ?: return@forEach
+                        val habitMap = data + ("id" to doc.id)
+                        habits.add(habitMap)
+
+                        HabitDeadlineScheduler.cancelForHabit(ctx, doc.id)
+
+                        // ставим будильник ровно на дедлайн ЭТОЙ привычки
+                        HabitDeadlineScheduler.scheduleForHabit(ctx, habitMap)
                     }
                 }
 
-            onDispose {
-                registration.remove() // снимаем слушатель, когда экран уходит
-            }
+            onDispose { registration.remove() }
         }
     }
 
