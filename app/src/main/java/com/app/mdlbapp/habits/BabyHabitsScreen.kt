@@ -43,6 +43,8 @@ import java.time.LocalDate
 import kotlin.collections.plus
 import androidx.compose.material3.MaterialTheme
 import com.app.mdlbapp.core.ui.theme.Tokens
+import androidx.compose.ui.res.stringResource
+import com.app.mdlbapp.R
 
 @Composable
 fun BabyHabitsScreen(navController: NavController) {
@@ -127,7 +129,7 @@ fun BabyHabitsScreen(navController: NavController) {
             Spacer(Modifier.height(Tokens.Space.xl.dp))
 
             Text(
-                text = "🧸 Твои привычки",
+                text = stringResource(R.string.my_habits_title),
                 fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
                 color = textColorMain,
@@ -139,7 +141,7 @@ fun BabyHabitsScreen(navController: NavController) {
 
             if (habits.isEmpty()) {
                 Text(
-                    text = "Нет заданных привычек.\nЖди указаний Мамочки...",
+                    text = stringResource(R.string.no_habits_text),
                     fontStyle = FontStyle.Italic,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                     fontSize = 18.sp,

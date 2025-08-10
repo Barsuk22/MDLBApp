@@ -42,6 +42,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import androidx.compose.material3.MaterialTheme
 import com.app.mdlbapp.core.ui.theme.Tokens
+import androidx.compose.ui.res.stringResource
 
 @Composable
 fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
@@ -150,7 +151,7 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
                     onClick = { /* TODO: меню */ },
                     modifier = Modifier.offset(y = (-4).dp)
                 ) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "Меню", tint = TextDarkBrown)
+                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.menu), tint = TextDarkBrown)
                 }
 
                 Spacer(Modifier.height(4.dp))
@@ -181,7 +182,7 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
                     if (canComplete) {
                         Icon(
                             imageVector = Icons.Default.Add,
-                            contentDescription = "Выполнить",
+                            contentDescription = stringResource(R.string.complete),
                             tint = TextDarkBrown,
                             modifier = Modifier
                                 .size(20.dp)

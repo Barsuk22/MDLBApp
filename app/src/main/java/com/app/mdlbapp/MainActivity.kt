@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -99,7 +100,7 @@ class MainActivity : ComponentActivity() {
                                 if (uid != null) {
                                     PairCodeScreenMommy(uid, navController)
                                 } else {
-                                    Text("Ошибка UID")
+                                    Text(text = stringResource(R.string.uid_error))
                                 }
                             }
                             composable("pair_baby") {
@@ -107,7 +108,7 @@ class MainActivity : ComponentActivity() {
                                 if (uid != null) PairCodeScreenBaby(
                                     uid,
                                     navController
-                                ) else Text("Ошибка UID")
+                                ) else Text(text = stringResource(R.string.uid_error))
                             }
                             composable(Screen.Mommy.route) {
                                 MommyScreen(navController)
@@ -132,7 +133,7 @@ class MainActivity : ComponentActivity() {
                                         mommyUid = mommyUid,
                                         babyUid = bUid
                                     )
-                                } ?: Text("Загрузка UID малыша...")
+                                } ?: Text(text = stringResource(R.string.uid_loading))
                             }
                             composable("mommy_rules") {
                                 RulesListScreen(navController)
@@ -162,7 +163,7 @@ class MainActivity : ComponentActivity() {
                                     CreateRuleScreen(navController, mommyUid, it)
                                 } ?: run {
                                     // Пока не загрузился UID малыша — показываем заглушку
-                                    Text("Загрузка UID малыша...")
+                                    Text(text = stringResource(R.string.uid_loading))
                                 }
                             }
                             composable("edit_rule/{ruleId}") { backStackEntry ->
@@ -201,7 +202,7 @@ class MainActivity : ComponentActivity() {
                                     CreateRewardScreen(navController, mommyUid, it)
                                 } ?: run {
                                     // Пока не загрузился UID малыша — показываем заглушку
-                                    Text("Загрузка UID малыша...")
+                                    Text(text = stringResource(R.string.uid_loading))
                                 }
                             }
                             composable("edit_reward/{rewardId}") { backStackEntry ->

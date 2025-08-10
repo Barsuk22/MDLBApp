@@ -1,3 +1,14 @@
 <resources>
     <string name="app_name">MDLBApp</string>
+
+    <string name="uid_loading">Загрузка UID малыша…</string>
+    <string name="uid_error">Ошибка UID</string>
+
+    <string name="my_habits_title">🧸 Твои привычки</string>
+    <string name="no_habits_text">Нет заданных привычек.\nЖди указаний Мамочки...</string>
+
+    <string name="menu">Меню</string>
+    <string name="complete">Выполнить</string>
+
+    <string name="create_habit">Создание привычки</string>
 </resources>
