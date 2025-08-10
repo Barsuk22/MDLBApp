@@ -7,7 +7,7 @@ import androidx.work.WorkerParameters
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
-import com.yourname.mdlbapp.updateHabitsNextDueDate
+import com.yourname.mdlbapp.habits.data.updateHabitsNextDueDate
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDateTime
 

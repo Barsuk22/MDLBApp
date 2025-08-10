@@ -25,7 +25,7 @@ import com.yourname.mdlbapp.core.ui.rememberAppWidthClass
 import com.yourname.mdlbapp.core.ui.rememberIsLandscape
 
 @Composable
-private fun rememberRulesUiTokens(): RulesUiTokens {
+fun rememberRulesUiTokens(): RulesUiTokens {
     val w = rememberAppWidthClass()
     val h = rememberAppHeightClass()
     val landscape = rememberIsLandscape()
@@ -81,7 +81,7 @@ private fun rememberRulesUiTokens(): RulesUiTokens {
     )
 }
 
-private data class RulesUiTokens(
+data class RulesUiTokens(
     val contentMaxWidth: Dp,
     val hPad: Dp,
     val vPad: Dp,

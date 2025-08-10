@@ -31,7 +31,6 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.google.firebase.ktx.Firebase
 import com.google.firebase.firestore.ktx.firestore
-import com.yourname.mdlbapp.CategoryDropdown
 import com.yourname.mdlbapp.R
 import com.yourname.mdlbapp.core.ui.AppHeightClass
 import com.yourname.mdlbapp.core.ui.AppWidthClass

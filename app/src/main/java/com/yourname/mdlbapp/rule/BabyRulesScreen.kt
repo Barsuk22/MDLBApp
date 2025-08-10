@@ -1,11 +1,10 @@
+package com.yourname.mdlbapp.rule
+
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -14,7 +13,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
@@ -22,88 +20,15 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.yourname.mdlbapp.R
-import com.yourname.mdlbapp.core.ui.AppHeightClass
-import com.yourname.mdlbapp.core.ui.AppWidthClass
-import com.yourname.mdlbapp.core.ui.rememberAppHeightClass
-import com.yourname.mdlbapp.core.ui.rememberAppWidthClass
-import com.yourname.mdlbapp.core.ui.rememberIsLandscape
-import com.yourname.mdlbapp.rule.Rule
-import com.yourname.mdlbapp.rule.RuleCard
+import com.yourname.mdlbapp.rule.ui.rememberBabyRulesUiTokens
 
 // ——— Адаптивные токены для экрана правил
-private data class RulesUiTokens(
-    val contentMaxWidth: Dp,
-    val hPad: Dp,
-    val vPad: Dp,
-    val gap: Dp,
-    val backIcon: Dp,
-    val backText: Float,
-    val titleSize: Float,
-    val emptySize: Float,
-    val listGap: Dp,
-    val bottomPad: Dp
-)
 
-@Composable
-private fun rememberRulesUiTokens(): RulesUiTokens {
-    val w = rememberAppWidthClass()
-    val h = rememberAppHeightClass()
-    val landscape = rememberIsLandscape()
 
-    val phonePortrait  = !landscape && w == AppWidthClass.Compact
-    val phoneLandscape =  landscape && h == AppHeightClass.Compact && w != AppWidthClass.Expanded
-    val tablet         = w == AppWidthClass.Medium || w == AppWidthClass.Expanded
-
-    val contentMaxWidth = when (w) {
-        AppWidthClass.Expanded -> 800.dp
-        AppWidthClass.Medium  -> 680.dp
-        else -> if (phoneLandscape) 560.dp else 520.dp
-    }
-    val hPad = when {
-        phoneLandscape -> 12.dp
-        phonePortrait  -> 16.dp
-        else -> 20.dp
-    }
-    val vPad = when {
-        phoneLandscape -> 10.dp
-        phonePortrait  -> 18.dp
-        else -> 22.dp
-    }
-    val gap = if (phoneLandscape) 8.dp else 12.dp
-    val listGap = if (phoneLandscape) 10.dp else 12.dp
-    val bottomPad = if (phoneLandscape) 12.dp else 20.dp
-
-    val backIcon = when {
-        tablet -> 41.dp
-        phoneLandscape -> 35.dp
-        else -> 37.dp
-    }
-    val backText = when {
-        tablet -> 18f
-        phoneLandscape -> 16f
-        else -> 17f
-    }
-
-    val titleSize = when {
-        tablet -> 26f
-        phoneLandscape -> 22f
-        else -> 24f
-    }
-    val emptySize = when {
-        tablet -> 18f
-        phoneLandscape -> 16f
-        else -> 17f
-    }
-
-    return RulesUiTokens(
-        contentMaxWidth, hPad, vPad, gap,
-        backIcon, backText, titleSize, emptySize, listGap, bottomPad
-    )
-}
 
 @Composable
 fun BabyRulesScreen(navController: NavHostController) {
-    val t = rememberRulesUiTokens()
+    val t = rememberBabyRulesUiTokens()
     val rules = remember { mutableStateListOf<Rule>() }
     var mommyUid by remember { mutableStateOf<String?>(null) }
 
@@ -115,23 +40,21 @@ fun BabyRulesScreen(navController: NavHostController) {
     }
 
     // 2) Подписка на правила Мамочки
-    LaunchedEffect(mommyUid) {
-        val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
-        val mUid = mommyUid ?: return@LaunchedEffect
-        Firebase.firestore.collection("rules")
+    DisposableEffect(mommyUid) {
+        val babyUid = FirebaseAuth.getInstance().currentUser?.uid
+        if (babyUid == null || mommyUid == null) return@DisposableEffect onDispose {}
+        val reg = Firebase.firestore.collection("rules")
             .whereEqualTo("targetUid", babyUid)
-            .whereEqualTo("createdBy", mUid)
+            .whereEqualTo("createdBy", mommyUid)
             .orderBy("createdAt")
             .addSnapshotListener { snaps, e ->
                 if (e != null) return@addSnapshotListener
                 rules.clear()
                 snaps?.documents?.forEach { d ->
-                    d.toObject(Rule::class.java)?.also {
-                        it.id = d.id
-                        rules.add(it)
-                    }
+                    d.toObject(Rule::class.java)?.also { it.id = d.id; rules.add(it) }
                 }
             }
+        onDispose { reg.remove() }
     }
 
     Box(
