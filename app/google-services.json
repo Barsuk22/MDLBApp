@@ -7,6 +7,43 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:447458623377:android:e7e9e92c1e2e62f2bf2430",
+        "android_client_info": {
+          "package_name": "com.app.mdlbapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "447458623377-dh689l25ohoko5dfs7ovkb6fjk15fmpg.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.app.mdlbapp",
+            "certificate_hash": "8355bd2b5d8f098a7c659a8b67662578fb2ae69c"
+          }
+        },
+        {
+          "client_id": "447458623377-1q3tl6v3mejtuspevb2pbjns376dpr3a.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBbCgV0YY_yL5RJeDch6SE-3uZJ3NbIA4w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "447458623377-1q3tl6v3mejtuspevb2pbjns376dpr3a.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:447458623377:android:c5b93c275531010fbf2430",
         "android_client_info": {
           "package_name": "com.yourname.mdlbapp"
