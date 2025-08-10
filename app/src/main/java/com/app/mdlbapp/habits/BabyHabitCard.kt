@@ -40,6 +40,8 @@ import com.app.mdlbapp.reward.changePoints
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import androidx.compose.material3.MaterialTheme
+import com.app.mdlbapp.core.ui.theme.Tokens
 
 @Composable
 fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
@@ -52,8 +54,8 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
     val streak = (habit["currentStreak"] as? Long ?: 0L).toInt()
 
     // Цвета и модификаторы…
-    val CardBorderColor = Color(0xFFE0C2BD)
-    val TextDarkBrown = Color(0xFF552216)
+    val CardBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+    val TextDarkBrown   = MaterialTheme.colorScheme.onBackground
 
     // 1. Считаем дедлайн из данных привычки (строка в формате "HH:mm")
     val deadlineStr = habit["deadline"] as? String
@@ -85,9 +87,9 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .border(4.dp, CardBorderColor, RoundedCornerShape(12.dp))
-            .background(cardBg, RoundedCornerShape(12.dp))  // <-- здесь используем cardBg
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .border(2.dp, CardBorderColor, RoundedCornerShape(Tokens.Radius.md.dp))
+            .background(cardBg, RoundedCornerShape(Tokens.Radius.md.dp))
+            .padding(horizontal = Tokens.Space.md.dp, vertical = Tokens.Space.sm.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -101,7 +103,7 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
                         painter = painterResource(id = R.drawable.ic_habit_name),
                         contentDescription = null,
                         tint = TextDarkBrown,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(Tokens.Icon.sm.dp)
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(

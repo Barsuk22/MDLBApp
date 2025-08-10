@@ -51,8 +51,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            com.app.mdlbapp.core.ui.theme.MDLBTheme {
-                MDLBAppTheme {
+            MDLBAppTheme {
+                com.app.mdlbapp.core.ui.theme.MDLBTheme {
                     val navController = rememberNavController()
 
                     val startDestination = remember { mutableStateOf("loading") }

@@ -37,6 +37,7 @@ import com.app.mdlbapp.core.ui.rememberAppHeightClass
 import com.app.mdlbapp.core.ui.rememberAppWidthClass
 import com.app.mdlbapp.core.ui.rememberIsLandscape
 import com.app.mdlbapp.R
+import com.app.mdlbapp.core.ui.theme.Tokens
 
 // ——— Адаптивные токены для экрана создания правила
 private data class CreateRuleUiTokens(

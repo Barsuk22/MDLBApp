@@ -41,13 +41,19 @@ import com.app.mdlbapp.reactions.ReactionOverlay
 import kotlinx.coroutines.delay
 import java.time.LocalDate
 import kotlin.collections.plus
+import androidx.compose.material3.MaterialTheme
+import com.app.mdlbapp.core.ui.theme.Tokens
 
 @Composable
 fun BabyHabitsScreen(navController: NavController) {
     val habits = remember { mutableStateListOf<Map<String, Any>>() }
-    val backgroundColor = Color(0xFFF5EAE3)
-    val textColor = Color(0xFF53291E)
-    val textColorMain = Color(0xFF000000)
+
+//    val backgroundColor = MaterialTheme.colorScheme.background
+//    val textColor = Color(0xFF53291E)
+//    val textColorMain = Color(0xFF000000)
+
+    val backgroundColor = MaterialTheme.colorScheme.background
+    val textColorMain = MaterialTheme.colorScheme.onBackground
 
     val context = LocalContext.current
 
@@ -116,9 +122,9 @@ fun BabyHabitsScreen(navController: NavController) {
             modifier = Modifier
                 .fillMaxSize()
                 .background(backgroundColor)
-                .padding(16.dp)
+                .padding(Tokens.Space.lg.dp)
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(Modifier.height(Tokens.Space.xl.dp))
 
             Text(
                 text = "🧸 Твои привычки",
@@ -129,19 +135,19 @@ fun BabyHabitsScreen(navController: NavController) {
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(Tokens.Space.lg.dp))
 
             if (habits.isEmpty()) {
                 Text(
                     text = "Нет заданных привычек.\nЖди указаний Мамочки...",
                     fontStyle = FontStyle.Italic,
-                    color = Color.DarkGray,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                     fontSize = 18.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(Tokens.Space.md.dp)) {
                     groupedHabits.forEach { (date, habitsForDate) ->
                         val dateLabel = formatDateLabel(date.toString()) // форматируем надпись
 
@@ -150,8 +156,8 @@ fun BabyHabitsScreen(navController: NavController) {
                                 text = dateLabel,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = textColor,
-                                modifier = Modifier.padding(vertical = 8.dp)
+                                color = textColorMain,
+                                modifier = Modifier.padding(vertical = Tokens.Space.sm.dp)
                             )
                         }
 
