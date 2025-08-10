@@ -199,14 +199,14 @@ fun BabyHabitsScreen(navController: NavController) {
         }
 
         // 3) сам оверлей поверх всего
-        if (showReaction && reactionImageRes != null) {
-            ReactionOverlay(
-                resId = reactionImageRes!!,
-                message = reactionMessage,
-                points = earnedPoints
-            ) {
-                showReaction = false
-            }
-        }
+//        if (showReaction && reactionImageRes != null) {
+//            ReactionOverlay(
+//                resId = reactionImageRes!!,
+//                message = reactionMessage,
+//                points = earnedPoints
+//            ) {
+//                showReaction = false
+//            }
+//        }
     }
 }
