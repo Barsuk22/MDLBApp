@@ -24,3 +24,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "MDLBApp"
 include(":app")
+include(":core-ui")
+include(":core-ui")
+include(":core-ui")

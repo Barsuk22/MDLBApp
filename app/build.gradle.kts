@@ -4,7 +4,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     id("com.google.gms.google-services")
 }
-apply(plugin = "com.google.gms.google-services")
+
 
 android {
     namespace = "com.app.mdlbapp"
