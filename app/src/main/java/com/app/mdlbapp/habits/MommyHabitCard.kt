@@ -367,8 +367,8 @@ fun MommyHabitCard(habit: Map<String, Any>, navController: NavController) {
                         .document(habit["id"] as String)
                         .update(
                             mapOf(
-                                "nextDueDate" to newDateStr,
-                                "deadline"    to newDateTimeStr,
+                                "nextDueDate" to pickedDate!!.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                                "deadline"    to pickedTime!!.format(DateTimeFormatter.ofPattern("HH:mm")),
                                 "status"      to "on"
                             )
                         )
