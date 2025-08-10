@@ -34,7 +34,7 @@ class HabitUpdateWorker(
         updateHabitsNextDueDate(habits)
 
         // сразу планируем следующий запуск на следующую полночь
-        HabitUpdateScheduler.scheduleNext(applicationContext)
+        //HabitUpdateScheduler.scheduleNext(applicationContext)
 
         return Result.success()
     }

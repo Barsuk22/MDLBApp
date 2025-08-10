@@ -47,13 +47,26 @@ class MainActivity : ComponentActivity() {
 
         FirebaseApp.initializeApp(this)
 
-        HabitUpdateScheduler.scheduleNext(this)
-
         enableEdgeToEdge()
 
         setContent {
             MDLBAppTheme {
                 com.app.mdlbapp.core.ui.theme.MDLBTheme {
+
+                    LaunchedEffect(Unit) {
+                        val uid = FirebaseAuth.getInstance().currentUser?.uid
+                        if (uid != null) {
+                            val role = Firebase.firestore.collection("users")
+                                .document(uid)
+                                .get()
+                                .await()
+                                .getString("role")
+                            if (role == "Mommy") {
+                                HabitUpdateScheduler.scheduleNext(this@MainActivity)
+                            }
+                        }
+                    }
+
                     val navController = rememberNavController()
 
                     val startDestination = remember { mutableStateOf("loading") }
