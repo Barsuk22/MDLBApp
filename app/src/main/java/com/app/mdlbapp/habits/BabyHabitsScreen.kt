@@ -45,6 +45,7 @@ import androidx.compose.material3.MaterialTheme
 import com.app.mdlbapp.core.ui.theme.Tokens
 import androidx.compose.ui.res.stringResource
 import com.app.mdlbapp.R
+import androidx.compose.runtime.DisposableEffect
 
 @Composable
 fun BabyHabitsScreen(navController: NavController) {
@@ -77,24 +78,34 @@ fun BabyHabitsScreen(navController: NavController) {
             }
     }
 
-    // 2) Подгружаем привычки, выданные текущей Мамочкой
-    LaunchedEffect(mommyUid) {
-        val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
-        val mUid = mommyUid ?: return@LaunchedEffect
-        Firebase.firestore.collection("habits")
-            .whereEqualTo("babyUid", babyUid)
-            .whereEqualTo("mommyUid", mUid)
-            .whereEqualTo("status", "on")
-            .addSnapshotListener { snapshots, error ->
-                if (error != null) return@addSnapshotListener
-                habits.clear()
-                snapshots?.documents?.forEach { doc ->
-                    val data = doc.data
-                    if (data != null) {
-                        habits.add(data + ("id" to doc.id))
+    // 2) Подгружаем привычки, выданные текущей Мамочкой — с корректным снятием слушателя
+    DisposableEffect(mommyUid) {
+        val babyUid = FirebaseAuth.getInstance().currentUser?.uid
+        val mUid = mommyUid
+
+        if (babyUid == null || mUid == null) {
+            onDispose { /* нечего убирать */ }
+        } else {
+            val registration = Firebase.firestore
+                .collection("habits")
+                .whereEqualTo("babyUid", babyUid)
+                .whereEqualTo("mommyUid", mUid)
+                .whereEqualTo("status", "on")
+                .addSnapshotListener { snapshots, error ->
+                    if (error != null) return@addSnapshotListener
+                    habits.clear()
+                    snapshots?.documents?.forEach { doc ->
+                        val data = doc.data
+                        if (data != null) {
+                            habits.add(data + ("id" to doc.id))
+                        }
                     }
                 }
+
+            onDispose {
+                registration.remove() // снимаем слушатель, когда экран уходит
             }
+        }
     }
 
     // 🔁 Группировка по дате nextDueDate

@@ -52,6 +52,8 @@ import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.app.mdlbapp.R
 import com.app.mdlbapp.core.time.formatDateLabel
+import com.app.mdlbapp.habits.background.HabitUpdateScheduler
+import com.google.firebase.firestore.ktx.BuildConfig
 import java.time.LocalDate
 import kotlin.collections.plus
 
@@ -315,5 +317,7 @@ fun HabitsScreen(navController: NavController) {
                 }
             }
         }
+        if (BuildConfig.DEBUG) HabitUpdateScheduler.scheduleNextInOneMinute(context)
     }
+
 }
