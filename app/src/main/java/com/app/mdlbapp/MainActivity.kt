@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -40,6 +41,7 @@ import com.app.mdlbapp.rule.EditRuleScreen
 import com.app.mdlbapp.rule.RulesListScreen
 import com.app.mdlbapp.rule.RulesScreen
 import com.app.mdlbapp.ui.theme.MDLBAppTheme
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 class MainActivity : ComponentActivity() {
@@ -75,6 +77,8 @@ class MainActivity : ComponentActivity() {
 
                     val startDestination = remember { mutableStateOf("loading") }
 
+                    val seeded = remember { mutableStateOf(false) }
+
                     LaunchedEffect(Unit) {
                         val auth = FirebaseAuth.getInstance()
                         startDestination.value = runCatching {
@@ -93,6 +97,28 @@ class MainActivity : ComponentActivity() {
                                 else -> Screen.RoleSelection.route
                             }
                         }.getOrElse { Screen.RoleSelection.route }
+                    }
+
+                    // Сеялка (DEBUG) — один раз, когда уже известно куда зашли и юзер залогинен/спарен
+                    LaunchedEffect(startDestination.value) {
+                        if (startDestination.value == "loading") return@LaunchedEffect
+                        if (!com.app.mdlbapp.BuildConfig.DEBUG) return@LaunchedEffect
+                        if (seeded.value) return@LaunchedEffect
+
+                        val pair = fetchPairUids()
+                        if (pair == null) {
+                            android.util.Log.d("DevSeeder","skip: not paired or no user")
+                            return@LaunchedEffect
+                        }
+
+                        try {
+                            val (mommyUid, babyUid) = pair
+                            DevSeeder.seedIfEmpty(mommyUid, babyUid)
+                            android.util.Log.d("DevSeeder","seed OK for $mommyUid/$babyUid")
+                            seeded.value = true
+                        } catch (e: Exception) {
+                            android.util.Log.e("DevSeeder","seed error", e)
+                        }
                     }
 
                     if (startDestination.value != "loading") {
@@ -235,13 +261,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-
-
-
-
-
-
-
+private suspend fun fetchPairUids(): Pair<String, String>? {
+    val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return null
+    val doc = Firebase.firestore.collection("users").document(uid).get().await()
+    val role = doc.getString("role") ?: return null
+    val paired = doc.getString("pairedWith") ?: return null
+    return if (role == "Mommy") uid to paired else paired to uid
+}
 
 
 

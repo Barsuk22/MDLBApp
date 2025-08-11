@@ -10,6 +10,10 @@ android {
     namespace = "com.app.mdlbapp"
     compileSdk = 36
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "com.app.mdlbapp"
         minSdk = 26
@@ -89,4 +93,6 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.google.truth:truth:1.4.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+
+    implementation("androidx.compose.material:material-icons-extended")
 }

@@ -1,5 +1,6 @@
 package com.app.mdlbapp.habits
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -67,9 +68,6 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
 
     // 2. Выбираем цвет фона карточки:
     val activeBg = Color(0xFFF8E7DF)
-    val doneBeforeDeadlineBg = Color(0xFFCCB2AB) // темнее
-    val cardBg = if (completed && beforeDeadline) doneBeforeDeadlineBg else activeBg
-
 
 
     val scheduledStr = habit["nextDueDate"] as? String
@@ -77,6 +75,9 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
         LocalDate.parse(scheduledStr, DateTimeFormatter.ISO_DATE)
     }.getOrNull()
     val isToday = scheduledDate == LocalDate.now()
+
+    val doneTodayBg = Color(0xFFCCB2AB) // темнее
+    val cardBg = if (completed && isToday) doneTodayBg else activeBg
 
     // Считаем, можно ли выполнить
     val canComplete = !completed && beforeDeadline && isToday
@@ -190,11 +191,19 @@ fun BabyHabitCard(habit: Map<String, Any>, onCompleted: () -> Unit) {
                                 .clickable {
                                     // одно нажатие — одна транзакция на сервере
                                     scope.launch {
-                                        val ok = AtomicUpdates.completeHabitAtomically(habit)
-                                        if (ok) {
-                                            onCompleted()
-                                            // 📴 сняли будильничек на дедлайн этой привычки — раз уже выполнено
-                                            (habit["id"] as? String)?.let { HabitDeadlineScheduler.cancelForHabit(ctx, it) }
+                                        try {
+                                            val ok = AtomicUpdates.completeHabitAtomically(habit)
+                                            if (ok) {
+                                                onCompleted()
+                                                // 📴 сняли будильничек на дедлайн этой привычки — раз уже выполнено
+                                                (habit["id"] as? String)?.let {
+                                                    HabitDeadlineScheduler.cancelForHabit(
+                                                        ctx,
+                                                        it
+                                                    )
+                                                }
+                                            }
+                                        } catch (e: Exception) {
                                         }
                                     }
                                 }

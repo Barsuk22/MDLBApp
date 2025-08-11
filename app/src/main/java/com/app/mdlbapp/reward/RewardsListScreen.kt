@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +44,7 @@ import androidx.navigation.NavController
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +55,13 @@ fun RewardsListScreen(navController: NavController) {
     // 1) Состояния для babyUid и totalPoints
     var babyUid by remember { mutableStateOf<String?>(null) }
     var totalPoints by remember { mutableStateOf(0) }
+
+    val scope = rememberCoroutineScope()
+
+    // Локальный дельтик. Каждый раз, когда пришёл новый totalPoints из снапшота,
+    // мы сбрасываем localDelta в 0, чтобы не "уезжать".
+    var localDelta by remember(totalPoints) { androidx.compose.runtime.mutableIntStateOf(0) }
+    val shownPoints = (totalPoints + localDelta).coerceAtLeast(0)
 
     // 2) Подгружаем список наград как раньше
     LaunchedEffect(mommyUid) {
@@ -120,15 +131,52 @@ fun RewardsListScreen(navController: NavController) {
                     .fillMaxWidth()
                     .background(Color(0xFFFFF4E8), RoundedCornerShape(12.dp))
                     .border(1.dp, Color(0xFFD9B99B), RoundedCornerShape(12.dp))
-                    .padding(12.dp),
-                contentAlignment = Alignment.Center
+                    .padding(8.dp)
             ) {
-                Text(
-                    text = "Всего баллов: $totalPoints 🪙",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF552216)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val bid = babyUid!! // тут уже не null
+
+                    // МИНУС — мгновенно уменьшаем в UI и отправляем транзакцию
+                    IconButton(onClick = {
+                        if (shownPoints == 0) return@IconButton
+                        localDelta -= 1
+                        scope.launch {
+                            try {
+                                changePoints(bid, -1) // транзакция с await, не даёт уйти < 0
+                            } catch (e: Exception) {
+                                // откатим локально и можно показать тост
+                                localDelta += 1
+                            }
+                        }
+                    }) {
+                        Icon(Icons.Filled.Remove, contentDescription = "Минус 1")
+                    }
+
+                    Text(
+                        text = "Всего баллов: $shownPoints 🪙",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF552216)
+                    )
+
+                    // ПЛЮС — мгновенно увеличиваем в UI и отправляем транзакцию
+                    IconButton(onClick = {
+                        localDelta += 1
+                        scope.launch {
+                            try {
+                                changePoints(bid, +1)
+                            } catch (e: Exception) {
+                                localDelta -= 1
+                            }
+                        }
+                    }) {
+                        Icon(Icons.Filled.Add, contentDescription = "Плюс 1")
+                    }
+                }
             }
         } else {
             // пока babyUid ещё не подгрузился

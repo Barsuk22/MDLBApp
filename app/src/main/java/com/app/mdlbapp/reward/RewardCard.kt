@@ -20,6 +20,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,11 +41,20 @@ fun RewardCard(
     onApprove: (() -> Unit)? = null,
     onReject: (() -> Unit)? = null
 ) {
+    // мягкий тик, чтобы в полночь метка исчезала сама
+    var now by remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) { kotlinx.coroutines.delay(60_000); now = System.currentTimeMillis() }
+    }
+
+    val isDisabled = (reward.disabledUntil ?: 0L) > now
+    val bg = if (isDisabled) Color(0xFFEDEDED) else Color(0xFFFDF2EC)
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .border(1.dp, Color(0xFFDEBEB5), RoundedCornerShape(12.dp))
-            .background(Color(0xFFFDF2EC), RoundedCornerShape(12.dp))
+            .background(bg, RoundedCornerShape(12.dp))
             .padding(12.dp)
     ) {
         Column {
@@ -91,7 +103,7 @@ fun RewardCard(
             if (reward.messageFromMommy.isNotBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Сообщение: ${'$'}{reward.messageFromMommy}",
+                    text = "Сообщение: ${reward.messageFromMommy}",
                     fontSize = 14.sp,
                     color = Color(0xFF795548),
                     fontStyle = FontStyle.Italic
@@ -141,14 +153,20 @@ fun RewardCard(
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    TextButton(onClick = onEdit) {
+                    // Изменить — мамочке всегда доступно
+                    OutlinedButton(onClick = onEdit, border = BorderStroke(1.dp, Color(0xFFDEBEB5))) {
+                        Text("Изменить", color = Color(0xFF552216))
+                    }
+
+                    // 👉 Новая меточка для серой награды до полуночи
+                    if (isDisabled) {
                         Text(
-                            text = "Изменить",
-                            color = Color(0xFF552216),
-                            fontSize = 16.sp,
-                            fontStyle = FontStyle.Italic
+                            text = "Обменено сегодня",
+                            fontStyle = FontStyle.Italic,
+                            color = Color(0xFF795548)
                         )
                     }
                 }
