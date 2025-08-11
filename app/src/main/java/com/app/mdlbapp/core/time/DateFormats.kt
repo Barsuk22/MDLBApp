@@ -6,7 +6,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
-fun formatDateLabel(dateStr: String): String {
+fun formatDateLabel(dateStr: String, today: LocalDate = LocalDate.now()): String {
     val inputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     val today = LocalDate.now()
     val tomorrow = today.plusDays(1)
