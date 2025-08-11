@@ -8,19 +8,19 @@ import java.util.Locale
 
 fun formatDateLabel(dateStr: String, today: LocalDate = LocalDate.now()): String {
     val inputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-    val today = LocalDate.now()
-    val tomorrow = today.plusDays(1)
     val date = try {
         LocalDate.parse(dateStr, inputFormatter)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         return dateStr
     }
+
+    val tomorrow = today.plusDays(1)
 
     return when {
         date == today -> "Сегодня"
         date == tomorrow -> "Завтра"
-        date.isAfter(today.plusDays(1)) && date <= today.with(DayOfWeek.SUNDAY) -> {
-            // Только если внутри этой недели
+        // внутри текущей недели (до воскресенья включительно) — показываем день недели
+        date.isAfter(tomorrow) && !date.isAfter(today.with(DayOfWeek.SUNDAY)) -> {
             val dayOfWeek = date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale("ru"))
             dayOfWeek.replaceFirstChar { it.uppercaseChar() }
         }
