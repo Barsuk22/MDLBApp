@@ -29,6 +29,7 @@ import com.app.mdlbapp.habits.HabitsScreen
 import com.app.mdlbapp.habits.background.HabitUpdateScheduler
 import com.app.mdlbapp.mainScreens.BabyScreen
 import com.app.mdlbapp.mainScreens.MommyScreen
+import com.app.mdlbapp.permissions.ExactAlarmPrompt
 import com.app.mdlbapp.reward.BabyRewardsScreen
 import com.app.mdlbapp.reward.CreateRewardScreen
 import com.app.mdlbapp.reward.EditRewardScreen
@@ -46,6 +47,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         FirebaseApp.initializeApp(this)
+
+        // один раз попросим точные будильнички (Android 12+)
+        //ExactAlarmRequest.askOnceIfNeeded(this)
 
         enableEdgeToEdge()
 
@@ -224,6 +228,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                    ExactAlarmPrompt()
                 }
             }
         }

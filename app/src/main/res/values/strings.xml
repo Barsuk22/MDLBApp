@@ -11,4 +11,8 @@
     <string name="complete">Выполнить</string>
 
     <string name="create_habit">Создание привычки</string>
+
+    <string name="mommy_inactive_title">⛔️ Отключённые привычки</string>
+    <string name="new_habit">＋ Новая привычка</string>
+    <string name="mommy_footer_subtitle">Привычки для любимого нижнего :)</string>
 </resources>
