@@ -28,13 +28,16 @@ class MissedDeadlineWorker(ctx: Context, params: WorkerParameters) : CoroutineWo
                 val status = snap.getString("status") ?: "on"
                 if (completed || status != "on") return@runTransaction false
 
-                val penaltyAbs = abs((snap.getLong("penalty") ?: 0L).toInt())
+                val penaltyAbs = kotlin.math.abs((snap.getLong("penalty") ?: 0L).toInt())
                 val babyUid = snap.getString("babyUid")
 
-                // сброс серии и отметка, что сегодня штрафовали
+                // важное: фиксируем штраф именно за due-день, а не за "сейчас"
+                val dueStr = snap.getString("nextDueDate") ?: LocalDate.now().toString()
+
+                // сброс серии и отметка, что за due-день штрафовали
                 tx.update(habitRef, mapOf(
-                    "currentStreak" to 0,
-                    "lastPenaltyDate" to LocalDate.now().toString()
+                    "currentStreak" to 0L,                // ← Long!
+                    "lastPenaltyDate" to dueStr
                 ))
 
                 if (babyUid != null && penaltyAbs > 0) {
@@ -45,7 +48,6 @@ class MissedDeadlineWorker(ctx: Context, params: WorkerParameters) : CoroutineWo
             }.await()
 
             if (applied && babyForPenalty != null && penaltyToCharge > 0) {
-                // единый кошелёк: points/totalPoints
                 changePoints(babyForPenalty!!, -penaltyToCharge)
             }
 

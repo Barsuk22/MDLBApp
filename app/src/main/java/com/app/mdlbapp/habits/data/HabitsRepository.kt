@@ -90,7 +90,7 @@ fun saveHabit(
         "babyUid"       to actualBabyUid,
         "nextDueDate"   to nextDueDate,
         "completedToday" to false,
-        "currentStreak"  to 0,
+        "currentStreak" to 0L,
         "reactionImageRes" to reactionImageRes,
     )
 
@@ -103,12 +103,16 @@ fun saveHabit(
 fun updateHabitsNextDueDate(
     habits: List<Map<String, Any?>>,
     fromDate: LocalDate = LocalDate.now(),
+    rollTime: LocalTime = LocalTime.MIDNIGHT
 ) {
     val db       = Firebase.firestore
     val isoFmt   = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-    val nowTime  = LocalTime.now()
+    val nowTime = rollTime
 
     habits.forEach { habit ->
+        val status = habit["status"] as? String ?: "on"
+        if (status != "on") return@forEach
+
         val habitId     = habit["id"] as? String ?: return@forEach
         val repeat      = habit["repeat"] as? String ?: "daily"
         val daysOfWeek  = habit["daysOfWeek"] as? List<String>
@@ -120,7 +124,7 @@ fun updateHabitsNextDueDate(
             val parsed = runCatching { LocalDate.parse(oneTimeDate) }.getOrNull()
             val updates = mutableMapOf<String, Any>()
             if (parsed != null) {
-                if (parsed.isBefore(LocalDate.now())) {
+                if (parsed.isBefore(fromDate)) {
                     // Дата прошла — отключаем привычку, сбрасываем daily-флаг и «горячие дни»
                     updates["status"]         = "off"
                     updates["completedToday"] = false
@@ -159,18 +163,22 @@ fun updateHabitsNextDueDate(
             updates["completedToday"] = false
         }
 
+        val lastPenaltyDateStr = habit["lastPenaltyDate"] as? String
+        val lastPenaltyDate = lastPenaltyDateStr?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+
         // если предыдущий due-дата уже в прошлом и не была выполнена — сбрасываем серию
         // и применяем штраф к общему счёту малыша
         if (oldDate != null && oldDate.isBefore(fromDate) && !completed) {
-            updates["currentStreak"] = 0L
-            val babyUid   = habit["babyUid"] as? String
-            val penaltyVal = (habit["penalty"] as? Long ?: 0L).toInt()
-            if (babyUid != null && penaltyVal != 0) {
-                try {
-                    changePointsAsync(babyUid, penaltyVal)
-                } catch (_: Exception) {
-                    // ошибки игнорируем
+            // штрафуем ТОЛЬКО если ещё не штрафовали вчера в дедлайн
+            if (lastPenaltyDate == null || lastPenaltyDate != oldDate) {
+                updates["currentStreak"] = 0L
+                val babyUid   = habit["babyUid"] as? String
+                val penaltyVal = (habit["penalty"] as? Long ?: 0L).toInt()
+                if (babyUid != null && penaltyVal != 0) {
+                    try { changePointsAsync(babyUid, penaltyVal) } catch (_: Exception) {}
                 }
+                // помечаем, что штраф за вчера уже списан
+                updates["lastPenaltyDate"] = oldDate.toString()
             }
         }
 
