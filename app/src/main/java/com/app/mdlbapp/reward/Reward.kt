@@ -10,6 +10,10 @@ data class Reward(
     val messageFromMommy: String = "",
     var id: String? = null,
     var createdAt: Long? = null,
+
+    val createdBy: String = "",
+    val targetUid: String = "",
+
     // Покупка, ожидающая подтверждения. Если true, Малыш запросил награду, но Мамочка ещё не подтвердила.
     var pending: Boolean = false,
     // UID пользователя, который запрашивает подтверждение награды (обычно это UID малыша). Null, если нет заявки.

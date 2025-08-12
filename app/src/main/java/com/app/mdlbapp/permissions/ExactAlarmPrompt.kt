@@ -9,6 +9,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -23,10 +24,20 @@ private fun canExact(context: Context): Boolean {
 
 private fun openExactAlarmSettings(ctx: Context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        ctx.startActivity(
-            Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+        try {
+            ctx.startActivity(
+                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: Exception) {
+            // запасная дверка — карточка приложения
+            val pkg = ctx.packageName
+            ctx.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(android.net.Uri.parse("package:$pkg"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
     }
 }
 
@@ -41,7 +52,7 @@ fun ExactAlarmPrompt() {
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var allowed by remember { mutableStateOf(canExact(ctx)) }
-    var shownThisSession by remember { mutableStateOf(false) }
+    var shownThisSession by rememberSaveable { mutableStateOf(false) }
 
     // Когда возвращаемся в приложение (после настроек) — перепроверяем
     DisposableEffect(lifecycleOwner) {

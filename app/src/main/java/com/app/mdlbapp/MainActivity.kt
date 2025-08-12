@@ -28,6 +28,7 @@ import com.app.mdlbapp.habits.CreateHabitScreen
 import com.app.mdlbapp.habits.EditHabitScreen
 import com.app.mdlbapp.habits.HabitsScreen
 import com.app.mdlbapp.habits.background.HabitUpdateScheduler
+import com.app.mdlbapp.journal.JournalScreen
 import com.app.mdlbapp.mainScreens.BabyScreen
 import com.app.mdlbapp.mainScreens.MommyScreen
 import com.app.mdlbapp.permissions.ExactAlarmPrompt
@@ -251,6 +252,11 @@ class MainActivity : ComponentActivity() {
                             composable("edit_reward/{rewardId}") { backStackEntry ->
                                 val rewardId = backStackEntry.arguments?.getString("rewardId") ?: ""
                                 EditRewardScreen(navController, rewardId)
+                            }
+                            composable("journal") {
+                                JournalScreen(
+                                    onBack = { navController.popBackStack() }
+                                )
                             }
                         }
                     }

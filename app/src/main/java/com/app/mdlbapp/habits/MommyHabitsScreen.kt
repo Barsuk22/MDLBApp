@@ -47,15 +47,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.app.mdlbapp.R
+import com.app.mdlbapp.core.time.formatDateLabel
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
-import com.app.mdlbapp.R
-import com.app.mdlbapp.core.time.formatDateLabel
-import com.app.mdlbapp.habits.background.HabitUpdateScheduler
-import com.google.firebase.firestore.ktx.BuildConfig
 import java.time.LocalDate
-import kotlin.collections.plus
 
 @Composable
 fun HabitsScreen(navController: NavController) {

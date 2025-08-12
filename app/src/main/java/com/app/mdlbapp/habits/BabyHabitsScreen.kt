@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -25,28 +27,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.app.mdlbapp.R
+import com.app.mdlbapp.core.time.formatDateLabel
+import com.app.mdlbapp.core.ui.theme.Tokens
+import com.app.mdlbapp.habits.background.HabitDeadlineScheduler
+import com.app.mdlbapp.reactions.ReactionOverlay
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
-import com.app.mdlbapp.core.time.formatDateLabel
-import com.app.mdlbapp.reactions.ReactionOverlay
 import kotlinx.coroutines.delay
 import java.time.LocalDate
-import kotlin.collections.plus
-import androidx.compose.material3.MaterialTheme
-import com.app.mdlbapp.core.ui.theme.Tokens
-import androidx.compose.ui.res.stringResource
-import com.app.mdlbapp.R
-import androidx.compose.runtime.DisposableEffect
-import com.app.mdlbapp.habits.background.HabitDeadlineScheduler
 
 @Composable
 fun BabyHabitsScreen(navController: NavController) {
@@ -65,6 +63,7 @@ fun BabyHabitsScreen(navController: NavController) {
     var earnedPoints      by remember { mutableStateOf(0) }
 
     val ctx = LocalContext.current
+
 
     // UID Мамочки для фильтрации привычек
     var mommyUid by remember { mutableStateOf<String?>(null) }

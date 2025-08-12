@@ -43,7 +43,7 @@ object HabitDeadlineScheduler {
         }
 
         val flags = if (Build.VERSION.SDK_INT >= 31)
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         else
             PendingIntent.FLAG_UPDATE_CURRENT
 
@@ -65,9 +65,10 @@ object HabitDeadlineScheduler {
     fun cancelForHabit(ctx: Context, habitId: String) {
         val intent = Intent(ctx, HabitDeadlineReceiver::class.java).apply { action = ACTION }
         val flags = if (Build.VERSION.SDK_INT >= 31)
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         else
             PendingIntent.FLAG_UPDATE_CURRENT
+
         val pi = PendingIntent.getBroadcast(ctx, habitId.hashCode(), intent, flags)
         val alarm = ctx.getSystemService(AlarmManager::class.java)
         alarm?.cancel(pi)

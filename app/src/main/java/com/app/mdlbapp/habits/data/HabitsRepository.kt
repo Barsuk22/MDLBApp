@@ -9,12 +9,17 @@ import com.app.mdlbapp.core.Constants
 import com.app.mdlbapp.reward.changePointsAsync
 import com.app.mdlbapp.rule.computeNextDueDateForHabit
 import com.app.mdlbapp.rule.getNextDueDate
+import com.google.firebase.firestore.FieldPath
+import com.google.firebase.firestore.Query
 import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
+import com.google.firebase.firestore.ktx.firestore
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
 
 fun saveHabit(
     context: Context,
@@ -73,6 +78,8 @@ fun saveHabit(
         }
     } else null
 
+    val penaltySanitized = if (penalty > 0) -penalty else penalty
+
     val habit = hashMapOf(
         "title"         to title,
         "repeat"        to repeat,
@@ -82,7 +89,7 @@ fun saveHabit(
         "reportType"    to reportType,
         "category"      to category,
         "points"        to points,
-        "penalty"       to penalty,
+        "penalty"       to penaltySanitized,
         "reaction"      to reaction,
         "reminder"      to reminder,
         "status"        to status,
@@ -172,11 +179,29 @@ fun updateHabitsNextDueDate(
             // штрафуем ТОЛЬКО если ещё не штрафовали вчера в дедлайн
             if (lastPenaltyDate == null || lastPenaltyDate != oldDate) {
                 updates["currentStreak"] = 0L
-                val babyUid   = habit["babyUid"] as? String
+                val habitTitle = (habit["title"] as? String).orEmpty()
+                val mommyUid = habit["mommyUid"] as? String
+                val babyUid = habit["babyUid"] as? String
+
                 val penaltyVal = (habit["penalty"] as? Long ?: 0L).toInt()
                 if (babyUid != null && penaltyVal != 0) {
                     try { changePointsAsync(babyUid, penaltyVal) } catch (_: Exception) {}
                 }
+
+                Firebase.firestore.collection("habits").document(habitId)
+                    .collection("logs").document(oldDate.toString())
+                    .set(mapOf(
+                        "status" to "missed",
+                        "pointsDelta" to penaltyVal,    // уже отрицательное
+                        "source" to "midnight",
+                        "at" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                        // 👇 для общего журнала
+                        "habitId" to habitId,
+                        "habitTitle" to habitTitle,
+                        "mommyUid" to (mommyUid ?: ""),
+                        "babyUid" to (babyUid ?: "")
+                    ))
+
                 // помечаем, что штраф за вчера уже списан
                 updates["lastPenaltyDate"] = oldDate.toString()
             }

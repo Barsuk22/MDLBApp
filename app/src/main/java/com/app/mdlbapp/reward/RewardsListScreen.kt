@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.launch
@@ -209,6 +210,21 @@ fun RewardsListScreen(navController: NavController) {
                                     "pendingBy" to null
                                 )
                                 Firebase.firestore.collection("rewards").document(rid).update(updates)
+
+                                Firebase.firestore.collection("rewards").document(rid)
+                                    .collection("rewardLogs")
+                                    .add(
+                                        mapOf(
+                                            "status" to "approved",
+                                            "pointsDelta" to 0,                 // очки не меняем при approve
+                                            "source" to "mom-approve",
+                                            "at" to FieldValue.serverTimestamp(),
+                                            "rewardId" to rid,
+                                            "rewardTitle" to reward.title,
+                                            "mommyUid" to reward.createdBy,     // теперь есть в Reward
+                                            "babyUid" to reward.targetUid
+                                        )
+                                    )
                             }
                         }
                     } else null,
@@ -225,6 +241,21 @@ fun RewardsListScreen(navController: NavController) {
                                     "pendingBy" to null
                                 )
                                 Firebase.firestore.collection("rewards").document(rid).update(updates)
+
+                                Firebase.firestore.collection("rewards").document(rid)
+                                    .collection("rewardLogs")
+                                    .add(
+                                        mapOf(
+                                            "status" to "rejected",
+                                            "pointsDelta" to +reward.cost,
+                                            "source" to "mom-reject",
+                                            "at" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                                            "rewardId" to rid,
+                                            "rewardTitle" to reward.title,
+                                            "mommyUid" to reward.createdBy,
+                                            "babyUid" to (reward.targetUid.takeIf { !it.isNullOrEmpty() } ?: (reward.pendingBy ?: ""))
+                                        )
+                                    )
                             }
                         }
                     } else null

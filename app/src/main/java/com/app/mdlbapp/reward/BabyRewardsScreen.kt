@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.launch
@@ -145,7 +146,27 @@ fun BabyRewardsScreen(navController: NavHostController) {
                         if (totalPoints >= selectedReward.cost) {
                             scope.launch {
                                 try {
+                                    // 1) списали очки (как было)
                                     changePoints(babyUid, -selectedReward.cost)
+
+                                    // 2) записали лог
+                                    val rid = selectedReward.id ?: return@launch
+                                    val mUid = mommyUid ?: return@launch
+                                    Firebase.firestore
+                                        .collection("rewards").document(rid)
+                                        .collection("rewardLogs")
+                                        .add(
+                                            mapOf(
+                                                "status" to if (selectedReward.autoApprove) "bought" else "pending",
+                                                "pointsDelta" to -selectedReward.cost,
+                                                "source" to "buy",
+                                                "at" to FieldValue.serverTimestamp(),
+                                                "rewardId" to rid,
+                                                "rewardTitle" to selectedReward.title,
+                                                "mommyUid" to mUid,
+                                                "babyUid" to babyUid
+                                            )
+                                        )
                                 } catch (_: Exception) {
                                     Toast.makeText(context, "Не удалось списать баллы", Toast.LENGTH_SHORT).show()
                                 }
