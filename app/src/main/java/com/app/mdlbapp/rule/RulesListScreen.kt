@@ -50,6 +50,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import com.app.mdlbapp.R
+import com.google.firebase.firestore.FieldPath
 
 // ——— Токены для экрана списка правил (адаптивные размерчики)
 private data class RulesListUiTokens(
@@ -115,24 +116,38 @@ private fun rememberRulesListUiTokens(): RulesListUiTokens {
 fun RulesListScreen(navController: NavController) {
     val t = rememberRulesListUiTokens()
     val rules = remember { mutableStateListOf<Rule>() }
-    val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
 
     val selectedCategoryFilter = remember { mutableStateOf("Все") }
     val categories = listOf("Все", "Поведение", "Речь", "Контакт", "Физика", "Здоровье", "Дисциплина", "Прочее")
 
-    // Подписка на обновления правил
-    LaunchedEffect(Unit) {
-        Firebase.firestore.collection("rules")
+
+    // 1) Мамин uid
+    val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+
+    // 2) Узнаём uid Малыша этой Мамочки
+    var babyUid by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(mommyUid) {
+        Firebase.firestore.collection("users").document(mommyUid).get()
+            .addOnSuccessListener { doc -> babyUid = doc.getString("pairedWith") }
+    }
+
+    // 3) Подписываемся только когда babyUid получен
+    DisposableEffect(mommyUid, babyUid) {
+        if (babyUid == null) return@DisposableEffect onDispose {}
+
+        val reg = Firebase.firestore.collection("rules")
             .whereEqualTo("createdBy", mommyUid)
+            .whereEqualTo("targetUid", babyUid)          // ← именно МАЛЫШ
             .orderBy("createdAt")
-            .addSnapshotListener { snapshots, error ->
-                if (error != null) return@addSnapshotListener
-                val updated = snapshots?.documents?.mapNotNull { d ->
-                    d.toObject(Rule::class.java)?.apply { id = d.id }
-                }.orEmpty()
+            .orderBy(FieldPath.documentId())
+            .addSnapshotListener { snaps, e ->
+                if (e != null) return@addSnapshotListener
                 rules.clear()
-                rules.addAll(updated)
+                snaps?.documents?.forEach { d ->
+                    d.toObject(Rule::class.java)?.also { it.id = d.id; rules.add(it) }
+                }
             }
+        onDispose { reg.remove() }
     }
 
     Box(

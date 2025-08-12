@@ -38,6 +38,7 @@ import com.app.mdlbapp.core.ui.rememberAppWidthClass
 import com.app.mdlbapp.core.ui.rememberIsLandscape
 import com.app.mdlbapp.R
 import com.app.mdlbapp.core.ui.theme.Tokens
+import com.google.firebase.firestore.FieldValue
 import uiToDbStatus
 
 // ——— Адаптивные токены для экрана создания правила
@@ -456,7 +457,7 @@ fun CreateRuleScreen(
                             "status" to uiToDbStatus(isActive),
                             "createdBy" to mommyUid,
                             "targetUid" to babyUid,
-                            "createdAt" to System.currentTimeMillis()
+                            "createdAt" to FieldValue.serverTimestamp()
                         )
                         Firebase.firestore.collection("rules")
                             .add(newRule)

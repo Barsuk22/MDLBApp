@@ -1,5 +1,6 @@
 package com.app.mdlbapp.rule
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -9,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -23,6 +25,9 @@ import com.app.mdlbapp.core.ui.AppWidthClass
 import com.app.mdlbapp.core.ui.rememberAppHeightClass
 import com.app.mdlbapp.core.ui.rememberAppWidthClass
 import com.app.mdlbapp.core.ui.rememberIsLandscape
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldPath
+import com.google.firebase.firestore.FieldValue
 
 @Composable
 fun rememberRulesUiTokens(): RulesUiTokens {
@@ -101,12 +106,22 @@ fun RulesScreen(navController: NavController, mommyUid: String, babyUid: String)
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
 
+    val context = LocalContext.current
+    LaunchedEffect(mommyUid) {
+        try {
+            val fixed = migrateRulesCreatedAt(mommyUid)
+            if (fixed > 0) Toast.makeText(context, "Правила обновлены: $fixed", Toast.LENGTH_SHORT).show()
+        } catch (_: Exception) {}
+    }
+
     // 🔄 Автозагрузка правил
-    LaunchedEffect(Unit) {
-        Firebase.firestore.collection("rules")
+    DisposableEffect(mommyUid, babyUid) {
+        val reg = Firebase.firestore.collection("rules")
             .whereEqualTo("createdBy", mommyUid)
             .whereEqualTo("targetUid", babyUid)
-            .orderBy("createdAt") // ← читаем по createdAt
+            .orderBy("createdAt")
+            .orderBy(FieldPath.documentId())
+
             .addSnapshotListener { snapshots, error ->
                 if (error != null) return@addSnapshotListener
                 rules.clear()
@@ -116,6 +131,7 @@ fun RulesScreen(navController: NavController, mommyUid: String, babyUid: String)
                     if (rule != null) rules.add(rule)
                 }
             }
+        onDispose { reg.remove() }
     }
 
     // Общий фон
@@ -201,14 +217,15 @@ fun RulesScreen(navController: NavController, mommyUid: String, babyUid: String)
             Button(
                 onClick = {
                     if (title.isNotBlank() && description.isNotBlank()) {
-                        val rule = Rule(
-                            title = title,
-                            description = description,
-                            createdBy = mommyUid,
-                            targetUid = babyUid,
-                            createdAt = System.currentTimeMillis() // ← сохраняем то, по чему сортируем
+                        val newRule = mapOf(
+                            "title" to title.trim(),
+                            "description" to description.trim(),
+                            "createdBy" to mommyUid,
+                            "targetUid" to babyUid,
+                            "status" to RuleStatus.ACTIVE,
+                            "createdAt" to FieldValue.serverTimestamp()
                         )
-                        Firebase.firestore.collection("rules").add(rule)
+                        Firebase.firestore.collection("rules").add(newRule)
                         title = ""; description = ""
                     }
                 },

@@ -21,6 +21,7 @@ import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.app.mdlbapp.rule.ui.rememberBabyRulesUiTokens
 import com.app.mdlbapp.R
+import com.google.firebase.firestore.FieldPath
 
 // ——— Адаптивные токены для экрана правил
 
@@ -47,6 +48,8 @@ fun BabyRulesScreen(navController: NavHostController) {
             .whereEqualTo("targetUid", babyUid)
             .whereEqualTo("createdBy", mommyUid)
             .orderBy("createdAt")
+            .orderBy(FieldPath.documentId())
+
             .addSnapshotListener { snaps, e ->
                 if (e != null) return@addSnapshotListener
                 rules.clear()
