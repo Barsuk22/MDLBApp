@@ -305,6 +305,7 @@ fun BabyTile(
                     label.contains("Правила") -> navController.navigate("baby_rules")
                     label.contains("привычки", ignoreCase = true) -> navController.navigate("baby_habits")
                     label.contains("Поощрения") -> navController.navigate("baby_rewards")
+                    label.contains("Чат") -> navController.navigate("baby_chat")
                 }
             }
             .padding(horizontal = 16.dp),

@@ -223,7 +223,7 @@ fun MommyScreen(navController: NavHostController) {
             },
 
             MommyAction(R.drawable.ic_chat, "Чат с малышом") {
-                //navController.navigate("mommy_chat")
+                navController.navigate("mommy_chat")
             },
             MommyAction(R.drawable.ic_control, "Контроль\nустройства") {
                 //navController.navigate("device_control")
@@ -232,7 +232,7 @@ fun MommyScreen(navController: NavHostController) {
                 navController.navigate("journal")
             },
             MommyAction(R.drawable.ic_archive, "Архив\nдоказательств") {
-                //navController.navigate("evidence_archive")
+
             }
         )
     }

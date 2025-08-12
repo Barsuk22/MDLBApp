@@ -41,6 +41,8 @@ import com.app.mdlbapp.rule.CreateRuleScreen
 import com.app.mdlbapp.rule.EditRuleScreen
 import com.app.mdlbapp.rule.RulesListScreen
 import com.app.mdlbapp.rule.RulesScreen
+import com.app.mdlbapp.ui.chat.BabyChatScreen
+import com.app.mdlbapp.ui.chat.MommyChatScreen
 import com.app.mdlbapp.ui.theme.MDLBAppTheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -258,6 +260,8 @@ class MainActivity : ComponentActivity() {
                                     onBack = { navController.popBackStack() }
                                 )
                             }
+                            composable("mommy_chat") { MommyChatScreen(navController) }
+                            composable("baby_chat")  { BabyChatScreen(navController) }
                         }
                     }
                     ExactAlarmPrompt()
