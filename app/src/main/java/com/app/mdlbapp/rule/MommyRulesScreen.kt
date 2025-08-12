@@ -81,6 +81,7 @@ fun rememberRulesUiTokens(): RulesUiTokens {
     )
 }
 
+
 data class RulesUiTokens(
     val contentMaxWidth: Dp,
     val hPad: Dp,

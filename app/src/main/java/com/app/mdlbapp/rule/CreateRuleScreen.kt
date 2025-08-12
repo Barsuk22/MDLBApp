@@ -38,6 +38,7 @@ import com.app.mdlbapp.core.ui.rememberAppWidthClass
 import com.app.mdlbapp.core.ui.rememberIsLandscape
 import com.app.mdlbapp.R
 import com.app.mdlbapp.core.ui.theme.Tokens
+import uiToDbStatus
 
 // ——— Адаптивные токены для экрана создания правила
 private data class CreateRuleUiTokens(
@@ -236,7 +237,7 @@ fun CreateRuleScreen(
     val ruleDetails = remember { mutableStateOf("") }
     val ruleReminder = remember { mutableStateOf("") }
     val category = remember { mutableStateOf("Дисциплина") }
-    val status = remember { mutableStateOf("Временно отключено") }
+    var isActive by remember { mutableStateOf(true) }
 
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -426,18 +427,10 @@ fun CreateRuleScreen(
                 fontStyle = FontStyle.Italic,
                 color = Color(0xFF461E1B)
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(
-                    selected = status.value == "Активно",
-                    onClick = { status.value = "Активно" }
-                )
-                Text(text = "Активно")
+            Row {
+                RadioButton(selected = isActive, onClick = { isActive = true });  Text("Активно")
                 Spacer(Modifier.width(16.dp))
-                RadioButton(
-                    selected = status.value == "Временно отключено",
-                    onClick = { status.value = "Временно отключено" }
-                )
-                Text(text = "Временно отключено")
+                RadioButton(selected = !isActive, onClick = { isActive = false }); Text("Временно отключено")
             }
 
             Spacer(Modifier.height(t.gap * 2))
@@ -460,7 +453,7 @@ fun CreateRuleScreen(
                             "description" to ruleDetails.value,
                             "reminder" to ruleReminder.value,
                             "category" to category.value,
-                            "status" to status.value,
+                            "status" to uiToDbStatus(isActive),
                             "createdBy" to mommyUid,
                             "targetUid" to babyUid,
                             "createdAt" to System.currentTimeMillis()

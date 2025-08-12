@@ -372,7 +372,7 @@ fun RuleCard(
     val phoneLandscape = landscape && h == AppHeightClass.Compact && w != AppWidthClass.Expanded
     val tablet = w == AppWidthClass.Medium || w == AppWidthClass.Expanded
 
-    val isDisabled = rule.status == "Временно отключено"
+    val isDisabled = rule.status == RuleStatus.DISABLED
     val backgroundColor = if (isDisabled) Color(0xFFFFF0F0) else Color(0xFFF8EDE6)
     val borderColor = if (isDisabled) Color(0xFFCC8888) else Color(0xFFDEBEB5)
     val titleColor = if (isDisabled) Color(0xFF993333) else Color(0xFF552216)
@@ -552,6 +552,21 @@ fun getNextDueDate(
         }
         else   -> null
     }
+}
+
+fun migrateRuleStatuses(mommyUid: String) {
+    val db = Firebase.firestore
+    db.collection("rules").whereEqualTo("createdBy", mommyUid).get()
+        .addOnSuccessListener { snaps ->
+            val batch = db.batch()
+            snaps.documents.forEach { d ->
+                when (d.getString("status")) {
+                    "Активно" -> batch.update(d.reference, "status", RuleStatus.ACTIVE)
+                    "Временно отключено" -> batch.update(d.reference, "status", RuleStatus.DISABLED)
+                }
+            }
+            batch.commit()
+        }
 }
 
 // "Продакшн"-оболочка, для обычного вызова без параметров:

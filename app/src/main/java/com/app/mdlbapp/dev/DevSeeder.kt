@@ -44,7 +44,7 @@ object DevSeeder {
             mapOf(
                 "title" to "Фото завтрака",
                 "repeat" to "daily",
-                "deadline" to "10:00",
+                "deadline" to "16:00",
                 "nextDueDate" to today.format(fmt),
                 "reportType" to "photo",
                 "points" to 5, "penalty" to -10,
@@ -55,7 +55,7 @@ object DevSeeder {
             mapOf(
                 "title" to "Фото обеда",
                 "repeat" to "daily",
-                "deadline" to "12:00",
+                "deadline" to "17:00",
                 "nextDueDate" to today.format(fmt),
                 "reportType" to "photo",
                 "points" to 5, "penalty" to -10,
@@ -66,7 +66,7 @@ object DevSeeder {
             mapOf(
                 "title" to "Фото ужина",
                 "repeat" to "daily",
-                "deadline" to "19:00",
+                "deadline" to "18:00",
                 "nextDueDate" to today.format(fmt),
                 "reportType" to "photo",
                 "points" to 10, "penalty" to -20,

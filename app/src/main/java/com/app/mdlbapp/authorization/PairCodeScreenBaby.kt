@@ -41,6 +41,12 @@ import com.app.mdlbapp.Screen
 fun PairCodeScreenBaby(uid: String, navController: NavHostController) {
     val db = Firebase.firestore
     var inputCode by remember { mutableStateOf("") }
+    var isSaving by remember { mutableStateOf(false) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+
+// валидность: ровно 6 цифрок
+    val code = inputCode.trim()
+    val codeValid = code.length == 6 && code.all { it.isDigit() }
     val context = LocalContext.current
 
     // Единый набор цветов для экранов спаривания
@@ -81,50 +87,74 @@ fun PairCodeScreenBaby(uid: String, navController: NavHostController) {
 
                 OutlinedTextField(
                     value = inputCode,
-                    onValueChange = { inputCode = it },
+                    onValueChange = {
+                        inputCode = it.filter { ch -> ch.isDigit() }.take(6)
+                        if (errorText != null) errorText = null
+                    },
+                    isError = errorText != null,
                     label = { Text("Код от Мамочки") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (errorText != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(errorText!!, color = Color.Red)
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
 
                 Button(
+                    enabled = !isSaving && codeValid,
                     onClick = {
-                        val codeRef = db.collection("pairCodes").document(inputCode)
-                        codeRef.get().addOnSuccessListener { doc ->
-                            val mommyUid = doc.getString("mommyUid")
-                            if (!mommyUid.isNullOrEmpty()) {
-                                // Обновляем обоих
-                                db.collection("users").document(uid).update("pairedWith", mommyUid)
-                                db.collection("users").document(mommyUid).update("pairedWith", uid)
-                                // Удаляем код
-                                codeRef.delete()
-                                // Навигация
-                                navController.navigate(Screen.Baby.route) {
-                                    popUpTo(Screen.RoleSelection.route) { inclusive = true }
-                                }
-                            } else {
-                                Toast.makeText(context, "Код не найден", Toast.LENGTH_SHORT).show()
-                            }
-                        }.addOnFailureListener {
-                            Toast.makeText(context, "Ошибка при проверке кода", Toast.LENGTH_SHORT).show()
+                        if (!codeValid) {              // двойная защита
+                            errorText = "Нужен 6-значный кодик"
+                            return@Button
                         }
+                        isSaving = true
+                        errorText = null
+
+                        val db = Firebase.firestore
+                        val codeRef = db.collection("pairCodes").document(code) // тут уже не пусто
+
+                        codeRef.get()
+                            .addOnSuccessListener { doc ->
+                                if (!doc.exists()) {
+                                    isSaving = false
+                                    errorText = "Такого кодика нет"
+                                    return@addOnSuccessListener
+                                }
+                                val mommyUid = doc.getString("mommyUid")
+                                if (mommyUid.isNullOrEmpty()) {
+                                    isSaving = false
+                                    errorText = "Кодик испорчен"
+                                    return@addOnSuccessListener
+                                }
+
+                                // делаем всё атомно: себе пару, маме пару, удалить код
+                                db.runBatch { b ->
+                                    val babyRef = db.collection("users").document(uid)
+                                    val mommyRef = db.collection("users").document(mommyUid)
+                                    b.update(babyRef, "pairedWith", mommyUid)
+                                    b.update(mommyRef, "pairedWith", uid)
+                                    b.delete(codeRef)
+                                }.addOnSuccessListener {
+                                    isSaving = false
+                                    navController.navigate(Screen.Baby.route) {
+                                        popUpTo(Screen.RoleSelection.route) { inclusive = true }
+                                    }
+                                }.addOnFailureListener { e ->
+                                    isSaving = false
+                                    errorText = e.localizedMessage ?: "Не вышло спариться"
+                                }
+                            }
+                            .addOnFailureListener { e ->
+                                isSaving = false
+                                errorText = e.localizedMessage ?: "Не получилось проверить код"
+                            }
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFE0C2BD),
-                        contentColor = accentColor
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF5D8CE))
                 ) {
-                    Text(
-                        "Подтвердить",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Text(if (isSaving) "Ждём…" else "Продолжить")
                 }
             }
         }

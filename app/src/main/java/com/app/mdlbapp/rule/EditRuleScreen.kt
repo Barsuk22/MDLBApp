@@ -43,6 +43,8 @@ import com.google.firebase.ktx.Firebase
 import com.app.mdlbapp.R
 import com.app.mdlbapp.rule.ui.CategoryDropdown
 import com.app.mdlbapp.rule.ui.RuleInputField
+import dbToUiChecked
+import uiToDbStatus
 
 @Composable
 fun EditRuleScreen(
@@ -55,7 +57,8 @@ fun EditRuleScreen(
     var details by remember { mutableStateOf("") }
     var reminder by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Дисциплина") }
-    var status by remember { mutableStateOf("Временно отключено") }
+
+    var isActive by remember { mutableStateOf(true) }
 
     // Новые состояния
     var isSaving by remember { mutableStateOf(false) }
@@ -71,7 +74,7 @@ fun EditRuleScreen(
                     details = it.description
                     reminder = it.reminder ?: ""
                     category = it.category ?: "Дисциплина"
-                    status = it.status ?: "Временно отключено"
+                    isActive = dbToUiChecked(it.status)
                 }
             }
             .addOnFailureListener {
@@ -170,15 +173,10 @@ fun EditRuleScreen(
                 color = Color(0xFF461E1B)
             )
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = status == "Активно", onClick = { status = "Активно" })
-                Text(text = "Активно")
-                Spacer(modifier = Modifier.width(16.dp))
-                RadioButton(
-                    selected = status == "Временно отключено",
-                    onClick = { status = "Временно отключено" }
-                )
-                Text(text = "Временно отключено")
+            Row {
+                RadioButton(selected = isActive, onClick = { isActive = true });  Text("Активно")
+                Spacer(Modifier.width(16.dp))
+                RadioButton(selected = !isActive, onClick = { isActive = false }); Text("Временно отключено")
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -200,11 +198,11 @@ fun EditRuleScreen(
                     errorMessage = null
 
                     val updatedFields = mapOf(
-                        "title" to title,
-                        "description" to details,
-                        "reminder" to reminder,
+                        "title" to title.trim(),
+                        "description" to details.trim(),
+                        "reminder" to reminder.trim(),
                         "category" to category,
-                        "status" to status
+                        "status" to uiToDbStatus(isActive)
                     )
                     Firebase.firestore.collection("rules").document(ruleId).update(updatedFields)
                         .addOnSuccessListener {
@@ -212,6 +210,7 @@ fun EditRuleScreen(
                             navController.popBackStack()
                         }
                         .addOnFailureListener {
+                            isSaving = false
                             Toast.makeText(context, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
                         }
                 },
