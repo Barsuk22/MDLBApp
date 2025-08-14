@@ -52,6 +52,7 @@ import com.app.mdlbapp.rule.RulesScreen
 import com.app.mdlbapp.ui.chat.BabyChatScreen
 import com.app.mdlbapp.ui.chat.MommyChatScreen
 import com.app.mdlbapp.ui.theme.MDLBAppTheme
+import com.google.firebase.firestore.FieldValue
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
@@ -414,6 +415,24 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    override fun onResume() {
+        super.onResume()
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        Firebase.firestore.collection("users").document(uid)
+            .update(mapOf(
+                "isOnline" to true
+            ))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        Firebase.firestore.collection("users").document(uid)
+            .update(mapOf(
+                "isOnline" to false,
+                "lastSeenAt" to FieldValue.serverTimestamp()
+            ))
+    }
 }
 
 // Вспомогашка для DEBUG-сидера
@@ -424,3 +443,5 @@ private suspend fun fetchPairUids(): Pair<String, String>? {
     val paired = doc.getString("pairedWith") ?: return null
     return if (role == "Mommy") uid to paired else paired to uid
 }
+
+

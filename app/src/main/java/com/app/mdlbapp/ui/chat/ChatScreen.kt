@@ -123,16 +123,19 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     var peerName by remember { mutableStateOf<String>("") }
     var peerPhoto by remember { mutableStateOf<String?>(null) }
 
-    // (по желанию) lastSeen — если заведёшь поле; пока не используем
-    // var lastSeen by remember { mutableStateOf<Timestamp?>(null) }
+    var peerOnline by remember { mutableStateOf(false) }
+    var peerLastSeen by remember { mutableStateOf<com.google.firebase.Timestamp?>(null) }
 
     LaunchedEffect(peerUid) {
         Firebase.firestore.collection("users").document(peerUid)
             .addSnapshotListener { snap, _ ->
-                peerName = snap?.getString("displayName").orEmpty()
-                // у нас фото хранится как dataURL в поле photoDataUrl на онбординге
+                peerName  = snap?.getString("displayName").orEmpty()
                 peerPhoto = snap?.getString("photoDataUrl")
-                    ?: snap?.getString("photoUrl") // вдруг старое поле встретится
+                    ?: snap?.getString("photoUrl")
+
+                // ВАЖНО: читаем статус!
+                peerOnline   = snap?.getBoolean("isOnline") == true
+                peerLastSeen = snap?.getTimestamp("lastSeenAt")
             }
     }
 
@@ -163,7 +166,11 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(peerName.ifBlank { "Без имени" }, style = MaterialTheme.typography.titleMedium)
-                            Text("в сети", style = MaterialTheme.typography.bodySmall, color = Color(0x99000000))
+                            Text(
+                                presenceText(peerOnline, peerLastSeen),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0x99000000)
+                            )
                         }
                     }
                 },
@@ -237,6 +244,22 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
             ) { Icon(Icons.Default.Send, contentDescription = "Отправить") }
             }
         }
+    }
+}
+
+@Composable
+private fun presenceText(isOnline: Boolean, lastSeen: com.google.firebase.Timestamp?): String {
+    if (isOnline) return "в сети"
+    val ms = lastSeen?.toDate()?.time ?: return "был(а) недавно"
+    val delta = System.currentTimeMillis() - ms
+    return if (delta < 60_000L) {
+        "был(а) недавно"
+    } else {
+        // «в 21:43»
+        val time = java.time.Instant.ofEpochMilli(ms)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalTime()
+        "был(а) в %02d:%02d".format(time.hour, time.minute)
     }
 }
 
