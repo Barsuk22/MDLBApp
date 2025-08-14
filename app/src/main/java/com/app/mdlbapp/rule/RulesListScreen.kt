@@ -4,6 +4,7 @@
 package com.app.mdlbapp.rule
 
 
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -50,6 +51,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import com.app.mdlbapp.R
+import com.app.mdlbapp.rule.data.Rule
 import com.google.firebase.firestore.FieldPath
 
 // ——— Токены для экрана списка правил (адаптивные размерчики)
@@ -141,7 +143,10 @@ fun RulesListScreen(navController: NavController) {
             .orderBy("createdAt")
             .orderBy(FieldPath.documentId())
             .addSnapshotListener { snaps, e ->
-                if (e != null) return@addSnapshotListener
+                if (e != null) {
+                    Log.e("Rules", "Listen failed", e)
+                    return@addSnapshotListener
+                }
                 rules.clear()
                 snaps?.documents?.forEach { d ->
                     d.toObject(Rule::class.java)?.also { it.id = d.id; rules.add(it) }

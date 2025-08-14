@@ -1,5 +1,6 @@
 package com.app.mdlbapp.habits.logic
 
+import com.app.mdlbapp.habits.domain.NextDueDate
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import java.time.LocalDate

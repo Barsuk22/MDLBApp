@@ -281,10 +281,13 @@ fun AuthScreen(
                             isRegistering = isRegistering, isLoading = isLoading,
                             googleVisible = !isRegistering,
                             onSubmit = {
-                                submitAuth(isRegistering, email, password,
+                                submitAuth(
+                                    isRegistering, email, password,
+                                    roleForNewUser = selectedRole,
                                     onError = { errorMessage = it },
                                     onLoading = { isLoading = it },
-                                    onSuccess = { uid -> checkPairingAndNavigate(uid, selectedRole, navController) })
+                                    onSuccess = { uid -> checkPairingAndNavigate(uid, selectedRole, navController) }
+                                )
                             },
                             onGoogleClick = {
                                 errorMessage = null
@@ -306,10 +309,13 @@ fun AuthScreen(
                             right = {
                                 Button(
                                     onClick = {
-                                        submitAuth(isRegistering, email, password,
+                                        submitAuth(
+                                            isRegistering, email, password,
+                                            roleForNewUser = selectedRole,
                                             onError = { errorMessage = it },
                                             onLoading = { isLoading = it },
-                                            onSuccess = { uid -> checkPairingAndNavigate(uid, selectedRole, navController) })
+                                            onSuccess = { uid -> checkPairingAndNavigate(uid, selectedRole, navController) }
+                                        )
                                     },
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -578,6 +584,7 @@ private fun submitAuth(
     isRegistering: Boolean,
     email: String,
     password: String,
+    roleForNewUser: String,
     onError: (String) -> Unit,
     onLoading: (Boolean) -> Unit,
     onSuccess: (uid: String) -> Unit
@@ -595,7 +602,7 @@ private fun submitAuth(
                 if (task.isSuccessful) {
                     val user = task.result?.user
                     if (user != null) {
-                        saveUserToFirestore(user.uid, role = "Unknown") // роль подставим при навигации
+                        ensureUserDoc(user.uid, roleForNewUser)  // создаём профиль с onboardingDone=false
                         onSuccess(user.uid)
                     } else onError("Ошибка регистрации")
                 } else {
@@ -608,8 +615,10 @@ private fun submitAuth(
                 onLoading(false)
                 if (task.isSuccessful) {
                     val user = task.result?.user
-                    if (user != null) onSuccess(user.uid)
-                    else onError("Ошибка входа")
+                    if (user != null) {
+                        ensureUserDoc(user.uid, roleForNewUser)  // обновим роль/timezone (onboardingDone не трогаем)
+                        onSuccess(user.uid)
+                    } else onError("Ошибка входа")
                 } else {
                     onError(task.exception?.localizedMessage ?: "Ошибка входа")
                 }
@@ -637,16 +646,17 @@ fun handleSignInResult(
     try {
         val account = task.getResult(ApiException::class.java)
         val credential = GoogleAuthProvider.getCredential(account.idToken, null)
+
         FirebaseAuth.getInstance().signInWithCredential(credential)
-            .addOnCompleteListener { authResult ->
-                if (authResult.isSuccessful && selectedRole != null) {
-                    val user = authResult.result?.user
-                    if (user != null) {
-                        saveUserToFirestore(user.uid, selectedRole)
-                        checkPairingAndNavigate(user.uid, selectedRole, navController)
-                    }
+            .addOnCompleteListener { signInTask ->
+                if (signInTask.isSuccessful) {
+                    val uid = FirebaseAuth.getInstance().currentUser!!.uid
+                    val role = selectedRole ?: "Unknown"
+
+                    ensureUserDoc(uid, role)              // создаём/обновляем профиль не трогая onboardingDone
+                    checkPairingAndNavigate(uid, role, navController)
                 } else {
-                    Toast.makeText(context, "Ошибка входа", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Ошибка входа через Google", Toast.LENGTH_SHORT).show()
                 }
             }
     } catch (e: Exception) {
@@ -663,13 +673,21 @@ fun checkPairingAndNavigate(
     val db = Firebase.firestore
     db.collection("users").document(uid).get()
         .addOnSuccessListener { document ->
+            val onboardingDone = document.getBoolean("onboardingDone") == true
+
+            if (!onboardingDone) {
+                // один раз показываем знакомство (и чистим спину стека)
+                navController.navigate(if (role == "Mommy") "onboarding_mommy" else "onboarding_baby") {
+                    popUpTo(Screen.RoleSelection.route) { inclusive = true }
+                }
+                return@addOnSuccessListener
+            }
+
             val pairedWith = document.getString("pairedWith")
             if (pairedWith.isNullOrEmpty()) {
-                if (role == "Mommy") navController.navigate("pair_mommy")
-                else navController.navigate("pair_baby")
+                navController.navigate(if (role == "Mommy") "pair_mommy" else "pair_baby")
             } else {
-                if (role == "Mommy") navController.navigate(Screen.Mommy.route)
-                else navController.navigate(Screen.Baby.route)
+                navController.navigate(if (role == "Mommy") Screen.Mommy.route else Screen.Baby.route)
             }
         }
 }
@@ -677,7 +695,40 @@ fun checkPairingAndNavigate(
 fun saveUserToFirestore(uid: String, role: String) {
     val data = mapOf(
         "role" to role,
-        "timezone" to ZoneId.systemDefault().id
+        "timezone" to ZoneId.systemDefault().id, // просто текущий, пояса будем ставить позже из меню
+        "onboardingDone" to false,               // у ОБОИХ будет знакомство
+        "displayName" to null,
+        "photoUrl" to null,
+        "theme" to null
     )
-    Firebase.firestore.collection("users").document(uid).set(data, SetOptions.merge())
+    Firebase.firestore.collection("users").document(uid)
+        .set(data, SetOptions.merge())
+}
+
+
+fun ensureUserDoc(uid: String, role: String) {
+    val db = Firebase.firestore
+    val ref = db.collection("users").document(uid)
+
+    db.runTransaction { tr ->
+        val snap = tr.get(ref)
+        if (!snap.exists()) {
+            // создаём «с нуля» и явно ставим onboardingDone = false
+            tr.set(ref, mapOf(
+                "role"           to role,
+                "timezone"       to ZoneId.systemDefault().id,
+                "onboardingDone" to false,
+                "displayName"    to "",
+                "pairedWith"     to null,
+                "photoUrl"       to null,
+                "theme"          to "soft"
+            ), SetOptions.merge())
+        } else {
+            // не трогаем onboardingDone, только обновляем роль/пояс
+            tr.set(ref, mapOf(
+                "role"     to role,
+                "timezone" to ZoneId.systemDefault().id
+            ), SetOptions.merge())
+        }
+    }
 }

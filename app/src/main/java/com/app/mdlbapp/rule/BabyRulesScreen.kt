@@ -1,5 +1,7 @@
 package com.app.mdlbapp.rule
 
+import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -9,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -21,7 +24,10 @@ import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.app.mdlbapp.rule.ui.rememberBabyRulesUiTokens
 import com.app.mdlbapp.R
+import com.app.mdlbapp.rule.data.Rule
+import com.app.mdlbapp.rule.data.migrateRulesCreatedAt
 import com.google.firebase.firestore.FieldPath
+import kotlinx.coroutines.tasks.await
 
 // ——— Адаптивные токены для экрана правил
 
@@ -33,25 +39,50 @@ fun BabyRulesScreen(navController: NavHostController) {
     val rules = remember { mutableStateListOf<Rule>() }
     var mommyUid by remember { mutableStateOf<String?>(null) }
 
-    // 1) Подгружаем UID Мамочки
+    val context = LocalContext.current
+
+    // 1) Тянем mommyUid (аккуратно, с await — чтобы точно получить значение)
     LaunchedEffect(Unit) {
         val babyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
-        Firebase.firestore.collection("users").document(babyUid).get()
-            .addOnSuccessListener { doc -> mommyUid = doc.getString("pairedWith") }
+        val doc = Firebase.firestore.collection("users").document(babyUid).get().await()
+        mommyUid = doc.getString("pairedWith")
     }
 
-    // 2) Подписка на правила Мамочки
+    // 1.1) Когда mommyUid появился — запускаем миграцию правил Мамочки
+    LaunchedEffect(mommyUid) {
+        mommyUid?.let { mom ->
+            try {
+                val fixedTime = migrateRulesCreatedAt(mom) // твоя старая миграция createdAt
+                val baby = FirebaseAuth.getInstance().currentUser?.uid
+                var fixedTarget = 0
+                if (baby != null) {
+                    fixedTarget = migrateRulesTargetUid(mom, baby)
+                }
+                val total = fixedTime + fixedTarget
+                if (total > 0) {
+                    Toast.makeText(context, "Правила обновлены: $total", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e("Rules", "migrate failed", e)
+            }
+        }
+    }
+
+    // 2) Подписка на правила Мамочки → Малыш
     DisposableEffect(mommyUid) {
         val babyUid = FirebaseAuth.getInstance().currentUser?.uid
         if (babyUid == null || mommyUid == null) return@DisposableEffect onDispose {}
+
         val reg = Firebase.firestore.collection("rules")
             .whereEqualTo("targetUid", babyUid)
             .whereEqualTo("createdBy", mommyUid)
             .orderBy("createdAt")
             .orderBy(FieldPath.documentId())
-
             .addSnapshotListener { snaps, e ->
-                if (e != null) return@addSnapshotListener
+                if (e != null) {
+                    Log.e("Rules", "Listen failed", e) // не глотаем ошибку, зайчик
+                    return@addSnapshotListener
+                }
                 rules.clear()
                 snaps?.documents?.forEach { d ->
                     d.toObject(Rule::class.java)?.also { it.id = d.id; rules.add(it) }
@@ -137,4 +168,31 @@ fun BabyRulesScreen(navController: NavHostController) {
             }
         }
     }
+}
+
+
+suspend fun migrateRulesTargetUid(mommyUid: String, babyUid: String): Int {
+    val db = Firebase.firestore
+    var fixed = 0
+
+    // 1) У кого вообще нет targetUid — проставим
+    val noTarget = db.collection("rules")
+        .whereEqualTo("createdBy", mommyUid)
+        .get().await()
+        .documents
+        .filter { !it.contains("targetUid") || it.getString("targetUid").isNullOrBlank() }
+
+    noTarget.forEach { d ->
+        db.runBatch { b ->
+            // если есть legacy-поле babyUid — возьмём его, иначе поставим текущего Малыша
+            val legacy = d.getString("babyUid")
+            b.update(d.reference, mapOf("targetUid" to (legacy ?: babyUid)))
+        }.await()
+        fixed++
+    }
+
+    // 2) (опционально) если есть старое поле babyUid — можно подчистить/скопировать createdAt
+    // Ничего не удаляем, только добавляем targetUid. Чистка не обязательна.
+
+    return fixed
 }

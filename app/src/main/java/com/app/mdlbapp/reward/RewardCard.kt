@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.app.mdlbapp.R
+import com.app.mdlbapp.reward.data.Reward
 
 @Composable
 fun RewardCard(

@@ -131,12 +131,22 @@ fun PairCodeScreenBaby(uid: String, navController: NavHostController) {
                                 }
 
                                 // делаем всё атомно: себе пару, маме пару, удалить код
+                                val presetTz = doc.getString("defaultBabyTimezone")
+
                                 db.runBatch { b ->
-                                    val babyRef = db.collection("users").document(uid)
+                                    val babyRef  = db.collection("users").document(uid)
                                     val mommyRef = db.collection("users").document(mommyUid)
-                                    b.update(babyRef, "pairedWith", mommyUid)
+
+                                    b.update(babyRef,  "pairedWith", mommyUid)
                                     b.update(mommyRef, "pairedWith", uid)
+
+                                    // если в коде пояска нет — просто ничего не делаем
+                                    if (!presetTz.isNullOrEmpty()) {
+                                        b.update(babyRef, "timezone", presetTz)
+                                    }
+
                                     b.delete(codeRef)
+
                                 }.addOnSuccessListener {
                                     isSaving = false
                                     navController.navigate(Screen.Baby.route) {

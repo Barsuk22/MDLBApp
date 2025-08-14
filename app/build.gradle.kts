@@ -65,11 +65,13 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.activity.compose)
 
-    // Firebase под BOM
-    implementation(platform("com.google.firebase:firebase-bom:32.3.1"))
+    // Firebase под BOM (все версии выравнивает BoM)
+    implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
     implementation("com.google.firebase:firebase-auth-ktx")
-    implementation("com.google.android.gms:play-services-auth:20.7.0")
     implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("com.google.firebase:firebase-storage-ktx") // ← без версии, идёт по BoM
+// Google Sign-In не под BoM, версию можно оставить как есть
+    implementation("com.google.android.gms:play-services-auth:20.7.0")
 
 
 
@@ -79,14 +81,12 @@ dependencies {
     testImplementation("org.mockito:mockito-core:4.11.0")
     testImplementation("org.mockito.kotlin:mockito-kotlin:4.1.0")
 
-    implementation("io.coil-kt:coil-gif:2.4.0")
-    implementation("io.coil-kt:coil-compose:2.4.0")
-
     implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("androidx.work:work-gcm:2.9.0") // если нужен GCM
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
+    implementation("io.coil-kt:coil-gif:2.6.0")
 
     implementation(project(":core-ui"))
 
@@ -95,4 +95,12 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 
     implementation("androidx.compose.material:material-icons-extended")
+
+
+    // Фото-лоадер для Compose
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
+
+    implementation("androidx.activity:activity-compose:1.9.2")
+
 }

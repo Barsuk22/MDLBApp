@@ -41,6 +41,7 @@ import androidx.navigation.NavController
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.app.mdlbapp.R
+import com.app.mdlbapp.rule.data.Rule
 import com.app.mdlbapp.rule.ui.CategoryDropdown
 import com.app.mdlbapp.rule.ui.RuleInputField
 import dbToUiChecked

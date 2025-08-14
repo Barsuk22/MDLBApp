@@ -58,6 +58,7 @@ fun ExactAlarmPrompt() {
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                val before = allowed
                 allowed = canExact(ctx)
             }
         }

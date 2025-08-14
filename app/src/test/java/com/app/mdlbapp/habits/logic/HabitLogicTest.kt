@@ -1,5 +1,6 @@
 package com.app.mdlbapp.habits.logic
 
+import com.app.mdlbapp.habits.domain.HabitLogic
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import java.time.*

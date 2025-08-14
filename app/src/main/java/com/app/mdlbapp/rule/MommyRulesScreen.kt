@@ -1,5 +1,6 @@
 package com.app.mdlbapp.rule
 
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -25,7 +26,8 @@ import com.app.mdlbapp.core.ui.AppWidthClass
 import com.app.mdlbapp.core.ui.rememberAppHeightClass
 import com.app.mdlbapp.core.ui.rememberAppWidthClass
 import com.app.mdlbapp.core.ui.rememberIsLandscape
-import com.google.firebase.auth.FirebaseAuth
+import com.app.mdlbapp.rule.data.Rule
+import com.app.mdlbapp.rule.data.migrateRulesCreatedAt
 import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 
@@ -123,7 +125,10 @@ fun RulesScreen(navController: NavController, mommyUid: String, babyUid: String)
             .orderBy(FieldPath.documentId())
 
             .addSnapshotListener { snapshots, error ->
-                if (error != null) return@addSnapshotListener
+                if (error != null) {
+                    Log.e("Rules", "Listen failed", error)
+                    return@addSnapshotListener
+                }
                 rules.clear()
                 snapshots?.documents?.forEach { doc ->
                     val rule = doc.toObject(Rule::class.java)

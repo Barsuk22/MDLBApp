@@ -10,8 +10,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.app.mdlbapp.core.HabitJournalItem
-import com.app.mdlbapp.core.HabitLogsRepository
+import com.app.mdlbapp.journal.data.HabitJournalItem
+import com.app.mdlbapp.journal.data.HabitLogsRepository
+import com.app.mdlbapp.journal.data.RewardJournalItem
+import com.app.mdlbapp.journal.data.RewardLogsRepository
 import com.google.firebase.firestore.ktx.firestore
 import kotlinx.coroutines.tasks.await
 import kotlin.collections.emptyList
@@ -69,7 +71,7 @@ private fun RewardJournalTabPairFeed() {
 
     val flowReady = mommyUid != null && babyUid != null
     val logs by remember(mommyUid, babyUid, flowReady) {
-        if (flowReady) com.app.mdlbapp.core.RewardLogsRepository
+        if (flowReady) RewardLogsRepository
             .allRewardLogsFlow(mommyUid!!, babyUid!!)
         else kotlinx.coroutines.flow.flowOf(emptyList())
     }.collectAsState(initial = emptyList())
@@ -85,7 +87,7 @@ private fun RewardJournalTabPairFeed() {
 }
 
 @Composable
-private fun RewardJournalRow(item: com.app.mdlbapp.core.RewardJournalItem) {
+private fun RewardJournalRow(item: RewardJournalItem) {
     val color = when (item.status) {
         "bought", "approved" -> MaterialTheme.colorScheme.primary
         "rejected"           -> MaterialTheme.colorScheme.error

@@ -8,18 +8,14 @@ import com.google.firebase.ktx.Firebase
 import com.app.mdlbapp.core.Constants
 import com.app.mdlbapp.reward.changePointsAsync
 import com.app.mdlbapp.rule.computeNextDueDateForHabit
-import com.app.mdlbapp.rule.getNextDueDate
-import com.google.firebase.firestore.FieldPath
-import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.FieldValue
 import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
-import com.google.firebase.firestore.ktx.firestore
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.callbackFlow
+import java.time.ZoneId
 
 fun saveHabit(
     context: Context,
@@ -37,13 +33,15 @@ fun saveHabit(
     reaction: String,
     reminder: String,
     status: String,
+    zone: ZoneId,
     reactionImageRes: Int?,
 
     onComplete: (success: Boolean, error: String?) -> Unit
 ) {
     val mommyUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
     val actualBabyUid = babyUid ?: return
-    val today      = LocalDate.now()
+    val today = LocalDate.now(zone)
+
 
     // 1) Для once-режима: конвертим аббревиатуру в ближайшую дату
     val oneTimeIso: String? = if (repeat == "once" && !selectedSingleDay.isNullOrBlank()) {
@@ -60,22 +58,21 @@ fun saveHabit(
         date.toString()   // ISO: "2025-07-24"
     } else null
 
-    // Формируем строку-дедлайн (HH:mm), default = "23:59"
-    val deadlineString = time
-        ?.let { SimpleDateFormat("HH:mm", Locale.getDefault()).format(it.time) }
-        ?: "23:59"
+
 
     // Вычисляем nextDueDate через единую функцию
+    val isoFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    val deadlineString = time?.let { SimpleDateFormat("HH:mm", Locale.getDefault()).format(it.time) } ?: "23:59"
+
     val nextDueDate = if (status == "on") {
-        getNextDueDate(
-            repeatMode = repeat,
-            daysOfWeek = if (repeat == "weekly") selectedDays else null,
+        computeNextDueDateForHabit(
+            repeatMode  = repeat,
+            daysOfWeek  = if (repeat == "weekly") selectedDays else null,
             oneTimeDate = oneTimeIso,
-            deadline = deadlineString
-        ) ?: run {
-            onComplete(false, "Не удалось определить дату следующего выполнения.")
-            return
-        }
+            deadline    = deadlineString,
+            fromDate    = LocalDate.now(zone),         // 👈 ДАТА В ПОЯСЕ МАЛЫША
+            nowTime     = LocalTime.now(zone)          // 👈 ВРЕМЯ В ПОЯСЕ МАЛЫША
+        )?.format(isoFmt)
     } else null
 
     val penaltySanitized = if (penalty > 0) -penalty else penalty
@@ -115,6 +112,8 @@ fun updateHabitsNextDueDate(
     val db       = Firebase.firestore
     val isoFmt   = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     val nowTime = rollTime
+
+    val today = fromDate
 
     habits.forEach { habit ->
         val status = habit["status"] as? String ?: "on"
@@ -194,7 +193,7 @@ fun updateHabitsNextDueDate(
                         "status" to "missed",
                         "pointsDelta" to penaltyVal,    // уже отрицательное
                         "source" to "midnight",
-                        "at" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                        "at" to FieldValue.serverTimestamp(),
                         // 👇 для общего журнала
                         "habitId" to habitId,
                         "habitTitle" to habitTitle,
