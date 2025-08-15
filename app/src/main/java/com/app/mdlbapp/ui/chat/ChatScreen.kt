@@ -5,6 +5,7 @@ package com.app.mdlbapp.ui.chat
 // ——— imports (собраны без дублей и отсортированы по пакетам) ———
 import android.graphics.BitmapFactory
 import android.util.Base64
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.MoreVert
@@ -36,6 +38,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Mood
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
@@ -131,8 +135,18 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     val scope = rememberCoroutineScope()
 
     // — ДАННЫЕ ЧАТА
-    val messages by ChatRepository.messagesFlow(mommyUid, babyUid)
+    val allMessages by ChatRepository.messagesFlow(mommyUid, babyUid)
         .collectAsState(initial = emptyList())
+
+// отметка "до какого момента я всё стёр" (персональная)
+    var myClearedAtMs by remember { mutableStateOf<Long?>(null) }
+
+// показываем ТОЛЬКО те сообщения, что новее моей отметки очистки
+    val messages = remember(allMessages, myClearedAtMs) {
+        val cut = myClearedAtMs ?: Long.MIN_VALUE
+        allMessages.filter { (it.at?.toDate()?.time ?: Long.MIN_VALUE) > cut }
+    }
+
 
     val listState = rememberLazyListState()
     val density = LocalDensity.current
@@ -157,6 +171,12 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     var inputHeightPx by remember { mutableStateOf(0) }
     var draft by remember { mutableStateOf("") }
     var datePickerOpen by remember { mutableStateOf(false) }
+
+    var clearDialogOpen by remember { mutableStateOf(false) }
+    var clearForMe by remember { mutableStateOf(true) }
+    var clearForPeer by remember { mutableStateOf(false) }
+
+    val ctx = androidx.compose.ui.platform.LocalContext.current
 
     // — ПОИСК
     var searchActive by remember { mutableStateOf(false) }
@@ -255,15 +275,20 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     }
 
     // Создадим корневой doc чата (merge)
+    var chatReady by remember { mutableStateOf(false) }
+
     LaunchedEffect(chatId) {
-        chatRef.set(
-            mapOf(
-                "mommyUid" to mommyUid,
-                "babyUid" to babyUid,
-                "createdAt" to FieldValue.serverTimestamp()
-            ),
-            SetOptions.merge()
-        )
+        try {
+            chatRef.set(
+                mapOf(
+                    "mommyUid" to mommyUid,
+                    "babyUid" to babyUid,
+                    "createdAt" to FieldValue.serverTimestamp()
+                ),
+                SetOptions.merge()
+            ).await()     // ⬅️ дождаться создания
+            chatReady = true
+        } catch (_: Exception) { /* покажите тост при желании */ }
     }
 
     // Тап-тап: статус «печатает» собеседника
@@ -273,6 +298,8 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
             val ms = ts?.toDate()?.time
             peerTypingAtMs = ms
             peerTyping = ms != null && (System.currentTimeMillis() - ms < 2_000L)
+
+            myClearedAtMs = snap?.getTimestamp("clearedAt.$me")?.toDate()?.time
         }
         onDispose { reg.remove() }
     }
@@ -568,6 +595,14 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                         android.widget.Toast.makeText(ctx, "Профили скоро появятся 🥰", android.widget.Toast.LENGTH_SHORT).show()
                                     })
                                 DropdownMenuItem(
+                                    text = { Text("Очистить чат") },
+                                    leadingIcon = { Icon(Icons.Filled.DeleteForever, contentDescription = null) },
+                                    onClick = {
+                                        menuOpen = false
+                                        clearDialogOpen = true
+                                    }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Медиа и файлы") },
                                     onClick = {
                                         menuOpen = false
@@ -721,14 +756,21 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     onDraft = { newText ->
                         draft = newText
                         val now = System.currentTimeMillis()
-                        if (now - lastTypingPingAt > 1_200L) {
-                            chatRef.set(mapOf("typing" to mapOf(me to FieldValue.serverTimestamp())), SetOptions.merge())
-                            lastTypingPingAt = now
+
+                        if (chatReady && now - lastTypingPingAt > 1_200L) {
+                            lastTypingPingAt = now                      // ⬅️ не забыть
+                            chatRef.update("typing.$me", FieldValue.serverTimestamp())
+                                .addOnFailureListener { e ->
+                                    Toast.makeText(ctx, "typing отказался: ${e.message}", Toast.LENGTH_SHORT).show()
+                                }
                         }
+
                         idleClearJob?.cancel()
                         idleClearJob = scope.launch {
                             delay(3_000L)
-                            if (draft == newText) chatRef.update("typing.$me", FieldValue.delete())
+                            if (draft == newText && chatReady) {
+                                chatRef.update("typing.$me", FieldValue.delete())
+                            }
                         }
                     },
                     onSend = {
@@ -755,6 +797,37 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     isQueryEmpty = searchQuery.isBlank()
                 )
             }
+
+            if (messages.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        color = Color(0x88000000),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                "Здесь пока ничего нет...",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Пожалуйста, отправьте своё первое сообщение!",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
             // Плавающая дата вверху (как оверлей)
             AnimatedVisibility(
                 visible = topBadgeDate != null,
@@ -797,6 +870,67 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
             )
         }
     }
+
+
+
+    if (clearDialogOpen) {
+        val nothingSelected = !clearForMe && !clearForPeer
+
+        AlertDialog(
+            onDismissRequest = { clearDialogOpen = false },
+            title = { Text("Очистить чат?") },
+            text = {
+                Column {
+                    Text("Нада аккуратно усё вытереть, чтобы глазкам было приятненька ✨")
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = clearForMe, onCheckedChange = { clearForMe = it })
+                        Spacer(Modifier.width(6.dp))
+                        Text("У меня (спрятать переписку для себя)")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = clearForPeer, onCheckedChange = { clearForPeer = it })
+                        Spacer(Modifier.width(6.dp))
+                        Text("И у собеседника (спрятать у него тоже)")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Давайте очистим с вами эту переписочку!!! ",
+                        color = Color(0x99000000),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !nothingSelected,
+                    onClick = {
+                        scope.launch {
+                            val updates = mutableMapOf<String, Any>()
+                            val now = FieldValue.serverTimestamp()
+                            if (clearForMe)   updates["clearedAt.$me"]      = now
+                            if (clearForPeer) updates["clearedAt.$peerUid"] = now
+                            if (updates.isNotEmpty()) {
+                                chatRef.set(updates, SetOptions.merge())
+                            }
+                            clearDialogOpen = false
+                            clearForMe = true
+                            clearForPeer = false
+                            android.widget.Toast
+                                .makeText(ctx, "Готово. Чат чистенький 💧", android.widget.Toast.LENGTH_SHORT)
+                                .show()
+                        }
+                    }
+                ) { Text("Очистить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearDialogOpen = false }) { Text("Отмена") }
+            }
+        )
+    }
+
+
+
 
     if (datePickerOpen) {
         val state = androidx.compose.material3.rememberDatePickerState()
@@ -1510,3 +1644,6 @@ private fun buildRows(messages: List<ChatMessage>): List<ChatRow> {
     }
     return out
 }
+
+
+
