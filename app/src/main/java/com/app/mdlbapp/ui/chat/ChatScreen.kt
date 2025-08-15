@@ -76,6 +76,7 @@ import coil.compose.AsyncImage
 import com.app.mdlbapp.data.chat.ChatMessage
 import com.app.mdlbapp.data.chat.ChatRepository
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.ktx.firestore
@@ -173,10 +174,13 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     var datePickerOpen by remember { mutableStateOf(false) }
 
     var clearDialogOpen by remember { mutableStateOf(false) }
-    var clearForMe by remember { mutableStateOf(true) }
-    var clearForPeer by remember { mutableStateOf(false) }
+    var alsoForPeer by remember { mutableStateOf(false) } // если true — удалим у обоих (жёстко)
 
     val ctx = androidx.compose.ui.platform.LocalContext.current
+
+    var contextForMsg by remember { mutableStateOf<Int?>(null) }   // какая «моя» пузырька открыта
+    var deleteConfirmForId by remember { mutableStateOf<String?>(null) } // спрашиваем, удалять ли
+
 
     // — ПОИСК
     var searchActive by remember { mutableStateOf(false) }
@@ -335,19 +339,33 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 
     // 2) Если пришло новое сообщение и пользователь был у низа — плавно докрутить
     LaunchedEffect(rows.size) {
+        if (!initialJumpDone && rows.isNotEmpty()) {
+            listState.scrollToItem(rows.lastIndex)
+            initialJumpDone = true
+            prevRowsSize = rows.size
+            return@LaunchedEffect
+        }
+
+        // ⬇️ защита
+        if (rows.isEmpty()) {
+            prevRowsSize = 0
+            return@LaunchedEffect
+        }
+
         if (initialJumpDone && rows.size > prevRowsSize && listState.isNearBottom()) {
             listState.animateScrollToItem(rows.lastIndex)
         }
-
         if (initialJumpDone && listState.isNearBottom()) {
             listState.scrollToItem(rows.lastIndex)
         }
         prevRowsSize = rows.size
     }
 
-// 3) Если открылась клавиатура/изменилась нижняя панель, и мы у низа — держим низ
+
+
+// 3) Держим низ при смене IME
     LaunchedEffect(imeBottomPx) {
-        if (initialJumpDone && listState.isNearBottom()) {
+        if (initialJumpDone && rows.isNotEmpty() && listState.isNearBottom()) {
             listState.scrollToItem(rows.lastIndex)
         }
     }
@@ -483,6 +501,36 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     }
 
     // ───────────────────── ХЕЛПЕРЫ (внутри экрана) ──────────────────
+    suspend fun deleteMessageById(mid: String) {
+        chatRef.collection("messages").document(mid).delete().await()
+    }
+
+    fun copyToClipboard(text: String) {
+        val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("message", text))
+        Toast.makeText(ctx, "Скопировала в буфер ✂️", Toast.LENGTH_SHORT).show()
+    }
+
+    fun replyWithQuote(text: String) {
+        // простая цитатка в поле ввода (без изменения схемы БД)
+        val snippet = text.lines().first().take(140)
+        draft = "↪ $snippet\n" + if (draft.isBlank()) "" else draft
+    }
+
+    suspend fun hardWipeChat(chatRef: DocumentReference, chunk: Int = 400) {
+        // Удаляем сообщениями порциями (лимит Firestore: 500 операций в батче)
+        while (true) {
+            val snap = chatRef.collection("messages")
+                .limit(chunk.toLong())
+                .get()
+                .await()
+            if (snap.isEmpty) break
+            val batch = Firebase.firestore.batch()
+            for (doc in snap.documents) batch.delete(doc.reference)
+            batch.commit().await()
+        }
+    }
 
     suspend fun jumpToMessage(i: Int) {
         val n = messages.size
@@ -801,7 +849,8 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
             if (messages.isEmpty()) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize(),
+                        .fillMaxSize()
+                        .padding(bottom = bottomPad),
                     contentAlignment = Alignment.Center
                 ) {
                     Surface(
@@ -874,54 +923,63 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 
 
     if (clearDialogOpen) {
-        val nothingSelected = !clearForMe && !clearForPeer
-
         AlertDialog(
             onDismissRequest = { clearDialogOpen = false },
             title = { Text("Очистить чат?") },
             text = {
                 Column {
-                    Text("Нада аккуратно усё вытереть, чтобы глазкам было приятненька ✨")
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = clearForMe, onCheckedChange = { clearForMe = it })
-                        Spacer(Modifier.width(6.dp))
-                        Text("У меня (спрятать переписку для себя)")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = clearForPeer, onCheckedChange = { clearForPeer = it })
-                        Spacer(Modifier.width(6.dp))
-                        Text("И у собеседника (спрятать у него тоже)")
-                    }
-                    Spacer(Modifier.height(6.dp))
                     Text(
-                        "Давайте очистим с вами эту переписочку!!! ",
-                        color = Color(0x99000000),
-                        style = MaterialTheme.typography.bodySmall
+                        "Сметём эту переписочку пушистым веничком ✨\n" +
+                                "Без галочки — спрячем историю только у вас (у собеседника ничего не пропадёт).\n" +
+                                "С галочкой — удалим всё у обоих навсегда. Это действие необратимо.",
+                        color = Color(0xFF1B1B1B),
+                        style = MaterialTheme.typography.bodyMedium
                     )
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = alsoForPeer, onCheckedChange = { alsoForPeer = it })
+                        Spacer(Modifier.width(6.dp))
+                        Text("И у собеседника (навсегда удалить у обоих)")
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
-                    enabled = !nothingSelected,
                     onClick = {
                         scope.launch {
-                            val updates = mutableMapOf<String, Any>()
-                            val now = FieldValue.serverTimestamp()
-                            if (clearForMe)   updates["clearedAt.$me"]      = now
-                            if (clearForPeer) updates["clearedAt.$peerUid"] = now
-                            if (updates.isNotEmpty()) {
-                                chatRef.set(updates, SetOptions.merge())
+                            try {
+                                ensureChatRoot(chatRef, mommyUid, babyUid)
+                                if (alsoForPeer) {
+                                    // 1) снести все messages (у тебя уже ок)
+                                    hardWipeChat(chatRef)
+
+                                    // 2) убрать СВОЮ "печатает" (а не весь map)
+                                    chatRef.update("typing.$me", FieldValue.delete()).await()
+
+                                    // 3) опционально убрать СВОЮ метку clearedAt (или просто оставить — не мешает)
+                                    chatRef.update("clearedAt.$me", FieldValue.delete()).await()
+
+                                    android.widget.Toast
+                                        .makeText(ctx, "Готово. Переписка удалена у обоих 🌬️", android.widget.Toast.LENGTH_SHORT)
+                                        .show()
+                                } else {
+                                    // МЯГКАЯ очистка: только спрятать у меня
+                                    chatRef.update("clearedAt.${me}", FieldValue.serverTimestamp()).await()
+                                    android.widget.Toast
+                                        .makeText(ctx, "Спрятали историю только у вас 💧", android.widget.Toast.LENGTH_SHORT)
+                                        .show()
+                                }
+                            } catch (e: Exception) {
+                                android.widget.Toast
+                                    .makeText(ctx, "Не получилось очистить: ${e.message}", android.widget.Toast.LENGTH_LONG)
+                                    .show()
+                            } finally {
+                                clearDialogOpen = false
+                                alsoForPeer = false
                             }
-                            clearDialogOpen = false
-                            clearForMe = true
-                            clearForPeer = false
-                            android.widget.Toast
-                                .makeText(ctx, "Готово. Чат чистенький 💧", android.widget.Toast.LENGTH_SHORT)
-                                .show()
                         }
                     }
-                ) { Text("Очистить") }
+                ) { Text(if (alsoForPeer) "Удалить навсегда" else "Очистить") }
             },
             dismissButton = {
                 TextButton(onClick = { clearDialogOpen = false }) { Text("Отмена") }
@@ -966,6 +1024,24 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 //«умная» реакция на ввод с задержкой
 // РАСШИРЕНИЕ: «это буква слова?» (учитывает цифры тоже)
 private fun Char.isWordChar(): Boolean = this.isLetterOrDigit()
+
+private suspend fun ensureChatRoot(
+    chatRef: DocumentReference,
+    mommyUid: String,
+    babyUid: String
+) {
+    val snap = chatRef.get().await()
+    if (!snap.exists()) {
+        chatRef.set(
+            mapOf(
+                "mommyUid" to mommyUid,
+                "babyUid"  to babyUid,
+                "createdAt" to FieldValue.serverTimestamp()
+            ),
+            SetOptions.merge()
+        ).await()
+    }
+}
 
 // Расширяем найденный кусочек до целого слова (по границам не-букв)
 private fun expandToWord(text: String, start: Int, end: Int): IntRange {
