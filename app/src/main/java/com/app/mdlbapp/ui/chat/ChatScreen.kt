@@ -241,11 +241,19 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(peerName.ifBlank { "Без имени" }, style = MaterialTheme.typography.titleMedium)
+
                             if (peerTyping) {
                                 TypingSubtitle()
                             } else {
+                                // тикаем раз в 15 сек, чтобы «только что» само сменилось на время
+                                val nowMs by androidx.compose.runtime.produceState(System.currentTimeMillis()) {
+                                    while (true) {
+                                        value = System.currentTimeMillis()
+                                        kotlinx.coroutines.delay(15_000L)
+                                    }
+                                }
                                 Text(
-                                    presenceText(peerOnline, peerLastSeen),
+                                    presenceText(peerOnline, peerLastSeen, nowMs),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0x99000000)
                                 )
@@ -372,18 +380,22 @@ private fun TypingSubtitle() {
 
 private fun presenceText(
     isOnline: Boolean,
-    lastSeen: com.google.firebase.Timestamp?
+    lastSeen: com.google.firebase.Timestamp?,
+    nowMs: Long
 ): String {
     if (isOnline) return "в сети"
-    val ms = lastSeen?.toDate()?.time ?: return "был(а) недавно"
-    val delta = System.currentTimeMillis() - ms
+
+    val rawMs = lastSeen?.toDate()?.time ?: return "был(а) только что"
+    val ms = minOf(rawMs, nowMs)               // защита от «времени из будущего»
+    val delta = nowMs - ms
+
     return if (delta < 60_000L) {
-        "был(а) недавно"
+        "был(а) только что"
     } else {
-        val time = java.time.Instant.ofEpochMilli(ms)
+        val t = java.time.Instant.ofEpochMilli(ms)
             .atZone(java.time.ZoneId.systemDefault())
             .toLocalTime()
-        "был(а) в %02d:%02d".format(time.hour, time.minute)
+        "был(а) в %02d:%02d".format(t.hour, t.minute)
     }
 }
 
