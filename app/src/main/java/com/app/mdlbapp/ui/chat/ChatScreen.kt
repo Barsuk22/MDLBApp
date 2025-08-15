@@ -241,19 +241,11 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(peerName.ifBlank { "Без имени" }, style = MaterialTheme.typography.titleMedium)
-
                             if (peerTyping) {
                                 TypingSubtitle()
                             } else {
-                                // тикаем раз в 15 сек, чтобы «только что» само сменилось на время
-                                val nowMs by androidx.compose.runtime.produceState(System.currentTimeMillis()) {
-                                    while (true) {
-                                        value = System.currentTimeMillis()
-                                        kotlinx.coroutines.delay(15_000L)
-                                    }
-                                }
                                 Text(
-                                    presenceText(peerOnline, peerLastSeen, nowMs),
+                                    presenceText(peerOnline, peerLastSeen),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0x99000000)
                                 )
@@ -380,23 +372,23 @@ private fun TypingSubtitle() {
 
 private fun presenceText(
     isOnline: Boolean,
-    lastSeen: com.google.firebase.Timestamp?,
-    nowMs: Long
+    lastSeen: com.google.firebase.Timestamp?
 ): String {
     if (isOnline) return "в сети"
 
-    val rawMs = lastSeen?.toDate()?.time ?: return "был(а) только что"
-    val ms = minOf(rawMs, nowMs)               // защита от «времени из будущего»
-    val delta = nowMs - ms
+    // 1) Если серверный штамп ещё не пришёл — временно показываем «недавно»
+    val rawMs = lastSeen?.toDate()?.time ?: return "был(а) недавно"
 
-    return if (delta < 60_000L) {
-        "был(а) только что"
-    } else {
-        val t = java.time.Instant.ofEpochMilli(ms)
-            .atZone(java.time.ZoneId.systemDefault())
-            .toLocalTime()
-        "был(а) в %02d:%02d".format(t.hour, t.minute)
-    }
+    // 2) Защита от «будущего» (разные пояса/разные часы на девайсах)
+    val now = System.currentTimeMillis()
+    val ms = minOf(rawMs, now)
+
+    // 3) Форматируем во **времени локального устройства**
+    val zdt = java.time.Instant.ofEpochMilli(ms)
+        .atZone(java.time.ZoneId.systemDefault())
+        .toLocalTime()
+
+    return "был(а) в %02d:%02d".format(zdt.hour, zdt.minute)
 }
 
 @Composable
