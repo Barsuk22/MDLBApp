@@ -56,4 +56,30 @@ object ChatRepository {
         ).await()
     }
 
+    suspend fun markAllIncomingAsSeen(
+        mommyUid: String,
+        babyUid: String,
+        meUid: String
+    ) {
+        val root = Firebase.firestore.collection("chats")
+            .document("${mommyUid}_${babyUid}")
+            .collection("messages")
+
+        val q = root
+            .whereEqualTo("toUid", meUid)
+            .whereEqualTo("seen", false)
+            .get()
+            .await()
+
+        if (!q.isEmpty) {
+            val batch = Firebase.firestore.batch()
+            q.documents.forEach { d ->
+                batch.update(d.reference, mapOf(
+                    "seen" to true,
+                    "seenAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+                ))
+            }
+            batch.commit().await()
+        }
+    }
 }

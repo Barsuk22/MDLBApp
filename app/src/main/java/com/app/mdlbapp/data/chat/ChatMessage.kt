@@ -7,6 +7,7 @@ data class ChatMessage(
     val fromUid: String = "",
     val toUid: String = "",
     val text: String = "",
-    val at: Timestamp? = null,
-    val seen: Boolean = false
+    val at: Timestamp? = null,     // серверное "отправлено"
+    val seen: Boolean = false,     // прочитано?
+    val seenAt: Timestamp? = null  // когда прочитали (для будущих вкусняшек)
 )
