@@ -6,11 +6,13 @@
 package com.app.mdlbapp.ui.chat
 
 // ——— imports (собраны без дублей и отсортированы по пакетам) ———
+import android.annotation.SuppressLint
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -19,7 +21,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -71,6 +75,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -88,6 +93,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -116,6 +122,7 @@ import androidx.compose.ui.unit.IntSize
 import com.app.mdlbapp.data.chat.ForwardPayload
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.BoxWithConstraints
 
 // ——— моделька поиска ———
 data class Hit(val msgIndex: Int, val range: IntRange)
@@ -176,11 +183,23 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 
     var myClearedAtMs by remember { mutableStateOf<Long?>(null) }
 
+    // ─ выделение и «режим выбора» ─
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedMids  by remember { mutableStateOf<Set<String>>(emptySet()) }
+    fun exitSelection() { selectionMode = false; selectedMids = emptySet() }
+    fun toggleSelect(mid: String) {
+        selectedMids = selectedMids.toMutableSet().also { if (!it.add(mid)) it.remove(mid) }
+        if (selectedMids.isEmpty()) selectionMode = false
+    }
+
+    // ─ скрытые «только у меня» сообщения (мягкое удаление)
+    var hiddenForMe by remember { mutableStateOf<Set<String>>(emptySet()) }
+
 
     // показываем ТОЛЬКО те сообщения, что новее моей отметки очистки
-    val messages = remember(allMessages, myClearedAtMs) {
+    val messages = remember(allMessages, myClearedAtMs, hiddenForMe) {
         val cut = myClearedAtMs ?: Long.MIN_VALUE
-        allMessages.filter { (it.at?.toDate()?.time ?: Long.MIN_VALUE) > cut }
+        allMessages.filter { (it.at?.toDate()?.time ?: Long.MIN_VALUE) > cut && it.id !in hiddenForMe }
     }
 
     // пины чата
@@ -240,9 +259,8 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     // — ДАННЫЕ ЧАТА
 
 
-    var forwarding by remember { mutableStateOf<ForwardPayload?>(null) }
+    var forwarding by remember { mutableStateOf<List<ForwardPayload>>(emptyList()) }
     var editing by remember { mutableStateOf<ChatMessage?>(null) }
-
     var flashHighlightedId by remember { mutableStateOf<String?>(null) }
     var flashJob by remember { mutableStateOf<Job?>(null) }
 
@@ -472,6 +490,10 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
             peerTyping = ms != null && (System.currentTimeMillis() - ms < 2_000L)
 
             myClearedAtMs = snap?.getTimestamp("clearedAt.$me")?.toDate()?.time
+
+            // 💡 карта скрытых сообщений «только для меня»
+            val map = snap?.get("hidden.$me") as? Map<*, *>
+            hiddenForMe = map?.keys?.mapNotNull { it as? String }?.toSet() ?: emptySet()
         }
         onDispose { reg.remove() }
     }
@@ -555,7 +577,15 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 
 
 
+    var deleteIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var deleteDialogOpen by remember { mutableStateOf(false) }
+    var alsoForPeerMsg by remember { mutableStateOf(false) }
 
+    fun openDeleteDialogFor(ids: Set<String>) {
+        deleteIds = ids
+        alsoForPeerMsg = false
+        deleteDialogOpen = true
+    }
 
     // НОВАЯ findHits: идём от НОВЫХ к старым, и по сообщению берём ТОЛЬКО первое совпадение.
     // Подсвечиваем не «буквы», а целое слово.
@@ -822,8 +852,47 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 
     androidx.compose.material3.Scaffold(
         topBar = {
-            if (!searchActive) {
-                TopAppBar(
+            when {
+                // ─ режим выбора сообщений (появляется отдельная шапка)
+                selectionMode -> SelectionTopBar(
+                    count = selectedMids.size,
+                    onCancel = { exitSelection() },
+                    onCopy = {
+                        val sorted = messages.filter { it.id in selectedMids }
+                            .sortedBy { it.at?.toDate()?.time ?: 0L }
+                        copyToClipboard(sorted.joinToString("\n") { it.text })
+                        exitSelection()
+                    },
+                    onForward = {
+                        val list = messages
+                            .filter { it.id in selectedMids }
+                            .sortedBy { it.at?.toDate()?.time ?: 0L }
+                            .map { m ->
+                                ForwardPayload(
+                                    fromUid   = m.fromUid,
+                                    fromName  = if (m.fromUid == me) meName else peerName,
+                                    fromPhoto = if (m.fromUid == me) mePhoto else peerPhoto,
+                                    text      = m.text
+                                )
+                            }
+                        forwarding = list
+                        replyingTo = null
+                        exitSelection()
+                    },
+                    onDelete = { openDeleteDialogFor(selectedMids) }
+                )
+
+                // ─ режим поиска (как у тебя было)
+                searchActive -> ChatSearchTopBarPlain(
+                    query = searchQuery,
+                    onQueryChange = { q -> searchQuery = q },
+                    onBack = { exitSearch() },
+                    onClear = { exitSearch() },
+                    autoFocus = true
+                )
+
+                // ─ обычная шапка чата (как у тебя было)
+                else -> TopAppBar(
                     modifier = Modifier.statusBarsPadding(),
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = Color(0xFFD9E7F1),
@@ -845,7 +914,7 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                 if (peerTyping) TypingSubtitle()
                                 else Text(
                                     presenceText(peerOnline, peerLastSeen),
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.bodySmall,   // <— тут ВАЖНО: typography, а не typTypography
                                     color = Color(0x99000000)
                                 )
                             }
@@ -854,7 +923,7 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     actions = {
                         val ctx = androidx.compose.ui.platform.LocalContext.current
                         IconButton(onClick = {
-                            android.widget.Toast.makeText(ctx, "Звонки скоро появятся 🥰", android.widget.Toast.LENGTH_SHORT).show()
+                            Toast.makeText(ctx, "Звонки скоро появятся 🥰", Toast.LENGTH_SHORT).show()
                         }) { Icon(Icons.Filled.Call, contentDescription = "Звонок") }
 
                         Box {
@@ -867,49 +936,26 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                     leadingIcon = { Icon(Icons.Filled.Search, null) },
                                     onClick = { menuOpen = false; searchActive = true }
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Профиль собеседника") },
-                                    onClick = {
-                                        menuOpen = false
-                                        android.widget.Toast.makeText(ctx, "Профили скоро появятся 🥰", android.widget.Toast.LENGTH_SHORT).show()
-                                    })
+                                DropdownMenuItem(text = { Text("Профиль собеседника") }, onClick = {
+                                    menuOpen = false
+                                    Toast.makeText(ctx, "Профили скоро появятся 🥰", Toast.LENGTH_SHORT).show()
+                                })
                                 DropdownMenuItem(
                                     text = { Text("Очистить чат") },
-                                    leadingIcon = { Icon(Icons.Filled.DeleteForever, contentDescription = null) },
-                                    onClick = {
-                                        menuOpen = false
-                                        clearDialogOpen = true
-                                    }
+                                    leadingIcon = { Icon(Icons.Filled.DeleteForever, null) },
+                                    onClick = { menuOpen = false; clearDialogOpen = true }
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Медиа и файлы") },
-                                    onClick = {
-                                        menuOpen = false
-                                        android.widget.Toast.makeText(ctx, "Медиа скоро появятся 🥰", android.widget.Toast.LENGTH_SHORT).show()
-                                    })
-                                DropdownMenuItem(
-                                    text = { Text("Настройки чата") },
-                                    onClick = {
-                                        menuOpen = false
-                                        android.widget.Toast.makeText(ctx, "Настройки скоро появятся 🥰", android.widget.Toast.LENGTH_SHORT).show()
-                                    })
+                                DropdownMenuItem(text = { Text("Медиа и файлы") }, onClick = {
+                                    menuOpen = false
+                                    Toast.makeText(ctx, "Медиа скоро появятся 🥰", Toast.LENGTH_SHORT).show()
+                                })
+                                DropdownMenuItem(text = { Text("Настройки чата") }, onClick = {
+                                    menuOpen = false
+                                    Toast.makeText(ctx, "Настройки скоро появятся 🥰", Toast.LENGTH_SHORT).show()
+                                })
                             }
                         }
                     }
-                )
-            } else {
-                ChatSearchTopBarPlain(
-                    query = searchQuery,
-                    onQueryChange = { q ->
-                        searchQuery = q
-                    },
-                    onBack = {
-                        exitSearch()
-                    },
-                    onClear = {
-                        exitSearch()
-                    },
-                    autoFocus = true
                 )
             }
         },
@@ -987,9 +1033,27 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                         )
                                     }
                                     .animateItemPlacement() // мягко переставляемся
+                                    .pointerInput(selectionMode) {
+                                        detectTapGestures(
+                                            onLongPress = {
+                                                if (!selectionMode) {
+                                                    selectionMode = true
+                                                    selectedMids = setOf(m.id)
+                                                } else toggleSelect(m.id)
+                                            },
+                                            onTap = {
+                                                if (selectionMode) {
+                                                    toggleSelect(m.id)
+                                                } else {
+                                                    val r = myRect
+                                                    if (r != null) { selectedMsgId = m.id; selectedRect = r }
+                                                    else Toast.makeText(ctx, "Еще меряем, тапни ещё разик 🫶", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        )
+                                    }
                             ) {
 
-                                val isPinnedForMe = pinnedSetForMe.contains(m.id)
                                 val isPinService = isPinServiceText(m.text)
                                 if (isPinService) {
                                     // центрированный «чипчик» вместо пузырька
@@ -1003,7 +1067,9 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                         peerName = peerName,
                                         peerPhoto = peerPhoto,
                                         highlightRange = if (searchActive && searchQuery.isNotBlank()) perMessageHit[index] else null,
-                                        selected = (searchActive && (selectedMsgIndex == index)) || (flashHighlightedId == m.id),
+                                        selected = (searchActive && (selectedMsgIndex == index))
+                                                || (flashHighlightedId == m.id)
+                                                || (selectionMode && selectedMids.contains(m.id)),
                                         onTap = {
                                             val r = myRect
                                             if (r != null) {
@@ -1036,18 +1102,41 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                                 ).show()
                                             }
                                         },
-                                        isPinned = isPinnedForMe
+                                        isPinned = isPinnedForMe,
+                                        selectionMode = selectionMode,
+                                        selectedForSelection = selectedMids.contains(m.id),
+                                        onToggleSelect = { toggleSelect(m.id) },
+                                        onSelectClick = {
+                                            if (selectionMode) toggleSelect(m.id) else {
+                                                // если не в режиме выбора — это обычный тап по пузырю
+                                                val r = myRect
+                                                if (r != null) { selectedMsgId = m.id; selectedRect = r }
+                                            }
+                                        },
+                                        onLongSelect = {
+                                            if (!selectionMode) {
+                                                selectionMode = true
+                                                selectedMids = setOf(m.id)
+                                            } else {
+                                                toggleSelect(m.id)
+                                            }
+                                        },
+                                        onSwipeReply = {
+                                            // стартуем «ответ на сообщение»
+                                            replyingTo = m
+                                            // можно добавить лёгкую вибрацию/тост при желании
+                                        },
+                                        replySwipeRight = false
                                     )
                                 }
                             }
-
                         }
                     }
                 }
             }
 
             // ВЕРХНЯЯ ПЛАНОЧКА
-            if (pinsForMe.isNotEmpty()) {
+            if (!selectionMode && pinsForMe.isNotEmpty()) {
                 Column(
                     Modifier
                         .align(Alignment.TopCenter)
@@ -1079,8 +1168,6 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     )
                 }
             }
-
-
 
             // ─────────── ВСПЛЫВАЮЩЕЕ МЕНЮ (центрируем по пузырю, клампим по экрану, лёгкий скрим) ───────────
             val selectedMsg = remember(selectedMsgId, messages) { messages.find { it.id == selectedMsgId } }
@@ -1155,13 +1242,14 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                     selectedRect = null
                                 },
                                 onForward = {
-                                    forwarding = ForwardPayload(
-                                        fromUid  = selectedMsg.fromUid,
-                                        fromName = if (selectedMsg.fromUid == me) meName else peerName,
-                                        fromPhoto= if (selectedMsg.fromUid == me) mePhoto else peerPhoto,
-                                        text     = selectedMsg.text
+                                    val f = ForwardPayload(
+                                        fromUid   = selectedMsg.fromUid,
+                                        fromName  = if (selectedMsg.fromUid == me) meName else peerName,
+                                        fromPhoto = if (selectedMsg.fromUid == me) mePhoto else peerPhoto,
+                                        text      = selectedMsg.text
                                     )
-                                    replyingTo = null                      // одновременно и «ответ» и «переслать» не держим
+                                    forwarding = listOf(f)
+                                    replyingTo = null
                                     selectedMsgId = null; selectedRect = null
                                 },
                                 onPin = {
@@ -1189,12 +1277,12 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                     } else {
                                         editing = selectedMsg
                                         draft = selectedMsg.text                    // кладём исходный текст в инпут
-                                        replyingTo = null; forwarding = null        // нельзя одновременно редактировать и «ответ/переслать»
+                                        replyingTo = null; forwarding = emptyList() // нельзя одновременно редактировать и «ответ/переслать»
                                         selectedMsgId = null; selectedRect = null   // закрываем меню
                                     }
                                 },
                                 onDelete = {
-                                    deleteConfirmForId = selectedMsg.id
+                                    openDeleteDialogFor(setOf(selectedMsg.id))
                                     selectedMsgId = null
                                     selectedRect = null
                                 }
@@ -1284,16 +1372,12 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                     val newText = draft.trim()
                                     if (newText.isBlank()) {
                                         Toast.makeText(ctx, "Пустышку нельзя, котик", Toast.LENGTH_SHORT).show()
-                                    } else if (newText == editing!!.text) {
-                                        // ничего не меняем — просто выходим из режима
-                                    } else {
+                                    } else if (newText != editing!!.text) {
                                         editMessage(editing!!.id, newText)
                                     }
-                                    // выходим из режима редактирования
                                     editing = null
                                     draft = ""
                                 } else {
-                                    // обычная отправка как было
                                     if (draft.isNotBlank()) {
                                         ChatRepository.sendText(
                                             mommyUid, babyUid,
@@ -1302,15 +1386,19 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                             reply = replyingTo?.let { ReplyPayload(it.id, it.fromUid, it.text.take(200)) }
                                         )
                                     }
-                                    forwarding?.let { f ->
-                                        ChatRepository.sendText(
-                                            mommyUid, babyUid,
-                                            fromUid = me, toUid = to,
-                                            text = f.text,
-                                            forward = f
-                                        )
+                                    if (forwarding.isNotEmpty()) {
+                                        forwarding.forEach { f ->
+                                            ChatRepository.sendText(
+                                                mommyUid, babyUid,
+                                                fromUid = me, toUid = to,
+                                                text = f.text,
+                                                forward = f
+                                            )
+                                        }
                                     }
-                                    draft = ""; replyingTo = null; forwarding = null
+                                    draft = ""
+                                    replyingTo = null
+                                    forwarding = emptyList()
                                 }
                                 chatRef.update("typing.$me", FieldValue.delete())
                             } catch (e: Exception) {
@@ -1319,12 +1407,12 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                         }
                     },
                     replyingTo   = replyingTo,
-                    forwardFrom  = forwarding,
+                    forwardFrom = forwarding,
+                    onCancelForward = { forwarding = emptyList() },
                     meUid        = me,
                     meName       = meName,
                     peerName     = peerName,
                     onCancelReply = { replyingTo = null },
-                    onCancelForward = { forwarding = null },
                     editing = editing,
                     onCancelEdit = { editing = null; draft = "" },
                     modifier = bottomModifier
@@ -1521,30 +1609,98 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         }
     }
 
-    if (deleteConfirmForId != null) {
+    if (deleteDialogOpen) {
         AlertDialog(
-            onDismissRequest = { deleteConfirmForId = null },
-            title = { Text("Удалить сообщение?") },
-            text  = { Text("Уйдёт насовсем у обоих. Отменить нельзя.") },
+            onDismissRequest = { deleteDialogOpen = false },
+            title = { Text("Удалить ${deleteIds.size} сообщен${if (deleteIds.size==1) "ие" else "ий"}?") },
+            text = {
+                Column {
+                    Text(
+                        "Без галочки — спрячем только у тебя.\nС галочкой — удалим у обоих навсегда.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF1B1B1B)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = alsoForPeerMsg, onCheckedChange = { alsoForPeerMsg = it })
+                        Spacer(Modifier.width(6.dp))
+                        Text("И у собеседника (удалить у обоих)")
+                    }
+                }
+            },
             confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        try {
-                            deleteMessageById(deleteConfirmForId!!)
-                            Toast.makeText(ctx, "Удалено 🗑️", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(ctx, "Не вышло: ${e.message}", Toast.LENGTH_LONG).show()
-                        } finally {
-                            deleteConfirmForId = null
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            try {
+                                if (alsoForPeerMsg) {
+                                    // Жёстко удалить у обоих
+                                    val batch = Firebase.firestore.batch()
+                                    deleteIds.forEach { mid ->
+                                        batch.delete(chatRef.collection("messages").document(mid))
+                                    }
+                                    batch.commit().await()
+                                    Toast.makeText(ctx, "Удалено у обоих", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    // Мягко скрыть только у меня
+                                    val updates = deleteIds.associate { mid -> "hidden.$me.$mid" to true }
+                                    chatRef.update(updates).await()
+                                    Toast.makeText(ctx, "Спрятала у тебя", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(ctx, "Не вышло: ${e.message}", Toast.LENGTH_LONG).show()
+                            } finally {
+                                deleteDialogOpen = false
+                                if (selectionMode) exitSelection()
+                            }
                         }
                     }
-                }) { Text("Удалить") }
+                ) { Text(if (alsoForPeerMsg) "Удалить навсегда" else "Спрятать у меня") }
             },
-            dismissButton = {
-                TextButton(onClick = { deleteConfirmForId = null }) { Text("Отмена") }
-            }
+            dismissButton = { TextButton({ deleteDialogOpen = false }) { Text("Отмена") } }
         )
     }
+}
+
+@Composable
+private fun SelectDot(checked: Boolean, onClick: () -> Unit) {
+    Surface(
+        shape = CircleShape,
+        color = if (checked) Color(0xFF3DA5F5) else Color.Transparent,
+        border = if (checked) null else androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF3DA5F5)),
+        modifier = Modifier.size(22.dp).clickable(onClick = onClick)
+    ) {
+        if (checked) Icon(Icons.Filled.Done, null, tint = Color.White, modifier = Modifier.padding(2.dp))
+    }
+}
+
+
+@Composable
+private fun SelectionTopBar(
+    count: Int,
+    onCancel: () -> Unit,
+    onCopy: () -> Unit,
+    onForward: () -> Unit,
+    onDelete: () -> Unit
+) {
+    TopAppBar(
+        modifier = Modifier.statusBarsPadding(),
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color(0xFFD9E7F1),
+            titleContentColor = Color.Black,
+            navigationIconContentColor = Color.Black,
+            actionIconContentColor = Color.Black
+        ),
+        navigationIcon = {
+            IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, contentDescription = "Отменить") }
+        },
+        title = { Text("$count") },
+        actions = {
+            IconButton(enabled = count > 0, onClick = onCopy)    { Icon(Icons.Filled.ContentCopy, null) }
+            IconButton(enabled = count > 0, onClick = onForward) { Icon(Icons.Filled.Send,          null) }
+            IconButton(enabled = count > 0, onClick = onDelete)  { Icon(Icons.Filled.DeleteForever, null) }
+        }
+    )
 }
 
 @Composable
@@ -1729,7 +1885,7 @@ private fun InputBarTelegramFullWidth(
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
     replyingTo: ChatMessage? = null,
-    forwardFrom: ForwardPayload? = null,
+    forwardFrom: List<ForwardPayload> = emptyList(),
     onCancelForward: (() -> Unit)? = null,
     meUid: String = "",
     meName: String = "Вы",
@@ -1754,8 +1910,8 @@ private fun InputBarTelegramFullWidth(
                 )
                 HorizontalDivider(color = Color(0x11000000))
             }
-            if (forwardFrom != null) {
-                ForwardPreviewBar(forwardFrom, onCancelForward) // ← НОВОЕ
+            if (forwardFrom.isNotEmpty()) {
+                ForwardPreviewBar(forwardFrom, onCancelForward)
                 HorizontalDivider(color = Color(0x11000000))
             }
             // ─ верхняя полосочка «В ответ …» (если есть)
@@ -1803,7 +1959,7 @@ private fun InputBarTelegramFullWidth(
                     Icon(Icons.Outlined.AttachFile, null, tint = Color(0x99000000))
                 }
 
-                val canSend = draft.isNotBlank() || forwardFrom != null
+                val canSend = draft.isNotBlank() || forwardFrom.isNotEmpty()
                 FilledIconButton(
                     onClick = onSend,
                     enabled = canSend,
@@ -1819,25 +1975,36 @@ private fun InputBarTelegramFullWidth(
 }
 
 @Composable
-private fun ForwardPreviewBar(payload: ForwardPayload, onClose: (() -> Unit)?) {
+private fun ForwardPreviewBar(payloads: List<ForwardPayload>, onClose: (() -> Unit)?) {
     Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Send, null, tint = Color(0xFF3DA5F5), modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Переслать 1 сообщение", style = MaterialTheme.typography.labelLarge)
+            Text(
+                "Переслать ${payloads.size} сообщен${if (payloads.size % 10 == 1 && payloads.size % 100 != 11) "ие" else "ий"}",
+                style = MaterialTheme.typography.labelLarge
+            )
             Spacer(Modifier.weight(1f))
             if (onClose != null) IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
                 Icon(Icons.Filled.Close, null, tint = Color(0x99000000))
             }
         }
         Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            PeerAvatar(payload.fromPhoto, payload.fromName, 22.dp)
-            Spacer(Modifier.width(8.dp))
-            Column {
-                Text(payload.fromName, color = Color(0xFF1976D2), style = MaterialTheme.typography.labelMedium)
-                Text(payload.text.take(140), color = Color(0x99000000), maxLines = 1)
+
+        // Небольшой список-превью (до 3 строк)
+        payloads.take(3).forEach { p ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                PeerAvatar(p.fromPhoto, p.fromName, 22.dp)
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text(p.fromName, color = Color(0xFF1976D2), style = MaterialTheme.typography.labelMedium)
+                    Text(p.text.take(140), color = Color(0x99000000), maxLines = 1)
+                }
             }
+        }
+        if (payloads.size > 3) {
+            Spacer(Modifier.height(2.dp))
+            Text("…и ещё ${payloads.size - 3}", color = Color(0x99000000), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -2130,73 +2297,183 @@ private fun ChatBubble(
     meUid: String,
     meName: String,
     onReplyAnchorClick: ((String) -> Unit)? = null,
-    isPinned: Boolean = false
+    isPinned: Boolean = false,
+    selectionMode: Boolean,
+    selectedForSelection: Boolean,
+    onToggleSelect: (() -> Unit)? = null,
+    onSelectClick:  (() -> Unit)? = null,
+    onLongSelect:   (() -> Unit)? = null,
+    onSwipeReply:   (() -> Unit)? = null,
+    replySwipeRight: Boolean = true,
 ) {
+
+    // базовые цвета/формы — как было
     val baseColor = if (mine) Color(0xFFDCF7C5) else Color.White
     val selectedColor = if (mine) Color(0xFFE9FFD6) else Color(0xFFFFFDE7)
-
     val bg by animateColorAsState(
         targetValue = if (selected) selectedColor else baseColor,
         label = "bubbleBg"
     )
-
     val shape = RoundedCornerShape(
         topStart = 18.dp, topEnd = 18.dp,
         bottomEnd = if (mine) 4.dp else 18.dp,
         bottomStart = if (mine) 18.dp else 4.dp
     )
 
-    Row(
-        modifier = Modifier
+// ─── «кружок выбора» всегда прилипает к левому краю ───
+    val dotSize = 22.dp
+    val dotGap = 6.dp
+    val bubbleExtraGap =
+        12.dp                 // ← NEW: дополнительный зазор между кружком и пузырём
+    val leftInset by animateDpAsState(         // сдвигаем ТОЛЬКО пузырьки собеседника
+        targetValue = if (selectionMode && !mine) dotSize + dotGap + bubbleExtraGap else 0.dp,
+        label = "selInset"
+    )
+
+    // ─── свайп-to-reply: единое направление для всех ───
+    val density = LocalDensity.current
+    val maxSwipePx = with(density) { 84.dp.toPx() }
+    val triggerPx  = with(density) { 46.dp.toPx() }
+    var swipePx by remember { mutableStateOf(0f) }
+
+    // смещение пузыря всегда в сторону выбранного направления
+    val signedOffset = if (replySwipeRight) swipePx else -swipePx
+    val hintAlpha    = (swipePx / triggerPx).coerceIn(0f, 1f)
+
+    Box(
+        Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.Bottom
+            .padding(vertical = 2.dp)
     ) {
-        if (!mine) {
-            if (showAvatar) PeerAvatar(peerPhoto, peerName, 28.dp) else Spacer(Modifier.size(28.dp))
-            Spacer(Modifier.width(6.dp))
+        if (selectionMode) {
+            // кружок — прибит к левому краю экрана
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 8.dp)
+            ) {
+                SelectDot(
+                    checked = selectedForSelection,
+                    onClick = { onToggleSelect?.invoke() }
+                )
+            }
         }
 
-        Surface(
-            color = bg,
-            shape = shape,
-            tonalElevation = 1.dp,
-            shadowElevation = if (selected) 2.dp else 0.dp,
-            border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF3DA5F5)) else null,
-            modifier = Modifier
-                .widthIn(max = if (mine) 360.dp else 320.dp)
-                .clickable(enabled = onTap != null) { onTap?.invoke() }
-        ) {
-            Column {
-                if (isPinned) {             // ← маленькая скрепочка сверху
-                    Row(Modifier.padding(start = 8.dp, top = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.PushPin, null, modifier = Modifier.size(14.dp), tint = Color(0xFF1E88E5))
-                        Spacer(Modifier.width(4.dp))
-                    }
-                }
-                message.forward?.let { f ->
-                    ForwardHeader(name = f.fromName, photo = f.fromPhoto)
-                    Spacer(Modifier.height(4.dp))
-                }
-
-                // ─ если это ответ — рисуем голубую шапочку
-                message.reply?.let { r ->
-                    ReplyStub(
-                        author = if (r.fromUid == meUid) meName else peerName,
-                        text = r.text,
-                        onClick = { onReplyAnchorClick?.invoke(r.mid) }
+        // подсказка «Reply» за пузырём во время свайпа
+        if (!selectionMode && hintAlpha > 0f) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .padding(start = leftInset)
+            ) {
+                val align = if (replySwipeRight) Alignment.CenterStart else Alignment.CenterEnd
+                Row(
+                    modifier = Modifier
+                        .align(align)
+                        .padding(horizontal = 10.dp)
+                        .alpha(hintAlpha),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Reply,
+                        contentDescription = null,
+                        tint = Color(0xFF3DA5F5)
                     )
-                    Spacer(Modifier.height(4.dp))
                 }
-                BubbleMeasured(
-                    text = message.text,
-                    mine = mine,
-                    at = message.at,
-                    seen = message.seen,
-                    highlightRange = highlightRange,
-                    edited = (message.edited == true)
-                )
+            }
+        }
+
+        // контент ряда (аватар + пузырь), с учётом левого жёлоба и свайпа
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = leftInset)
+                .offset { IntOffset(signedOffset.roundToInt(), 0) }
+                .then(
+                    Modifier.pointerInput(selectionMode) {
+                        if (!selectionMode) {
+                            detectHorizontalDragGestures(
+                                onHorizontalDrag = { _, dx ->
+                                    // «право» = dx>0; «лево» = dx<0
+                                    val step = if (replySwipeRight) dx else -dx
+                                    swipePx = (swipePx + step).coerceIn(0f, maxSwipePx)
+                                },
+                                onDragEnd = {
+                                    if (swipePx >= triggerPx) onSwipeReply?.invoke()
+                                    swipePx = 0f
+                                },
+                                onDragCancel = { swipePx = 0f }
+                            )
+                        }
+                    }
+                ),
+            horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Bottom
+        ) {
+            if (!mine) {
+                if (showAvatar) PeerAvatar(
+                    peerPhoto,
+                    peerName,
+                    28.dp
+                ) else Spacer(Modifier.size(28.dp))
+                Spacer(Modifier.width(6.dp))
+            }
+
+            Surface(
+                color = bg,
+                shape = shape,
+                tonalElevation = 1.dp,
+                shadowElevation = if (selected) 2.dp else 0.dp,
+                border = if (selected) androidx.compose.foundation.BorderStroke(
+                    2.dp,
+                    Color(0xFF3DA5F5)
+                ) else null,
+                modifier = Modifier
+                    .widthIn(max = if (mine) 360.dp else 320.dp)
+                    .combinedClickable(
+                        onClick = {
+                            // если режим выбора — переключаем чекбокс; иначе обычный тап
+                            onSelectClick?.invoke() ?: onTap?.invoke()
+                        },
+                        onLongClick = { onLongSelect?.invoke() }
+                    )
+            ) {
+                Column {
+                    if (isPinned) {
+                        Row(
+                            Modifier.padding(start = 8.dp, top = 8.dp, end = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                null,
+                                modifier = Modifier.size(14.dp),
+                                tint = Color(0xFF1E88E5)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
+                    }
+                    message.forward?.let { f ->
+                        ForwardHeader(name = f.fromName, photo = f.fromPhoto)
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    message.reply?.let { r ->
+                        ReplyStub(
+                            author = if (r.fromUid == meUid) meName else peerName,
+                            text = r.text,
+                            onClick = { onReplyAnchorClick?.invoke(r.mid) }
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    BubbleMeasured(
+                        text = message.text,
+                        mine = mine,
+                        at = message.at,
+                        seen = message.seen,
+                        highlightRange = highlightRange,
+                        edited = (message.edited == true)
+                    )
+                }
             }
         }
     }
@@ -2216,7 +2493,7 @@ private fun ForwardHeader(name: String, photo: String?) {
     }
 }
 
-
+@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 private fun ReplyStub(
     author: String,
@@ -2225,23 +2502,46 @@ private fun ReplyStub(
 ) {
     val clickMod = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
 
-    Surface(
-        color = Color(0xFFE6F2FF),
-        shape = RoundedCornerShape(10.dp),
+    BoxWithConstraints(
         modifier = Modifier
             .padding(start = 8.dp, top = 8.dp, end = 8.dp)
-            .then(clickMod)
     ) {
-        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-            Box(Modifier.width(3.dp).heightIn(min = 24.dp).background(Color(0xFF3DA5F5)))
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(author, color = Color(0xFF1976D2), style = MaterialTheme.typography.labelLarge)
-                Text(text, color = Color(0xFF1B1B1B), maxLines = 1)
+        // Мамочка делает цитатку намного уже: до 56% ширины или максимум 220dp
+        val targetMax = (maxWidth * 0.56f).coerceAtMost(220.dp)
+
+        Surface(
+            color = Color(0xFFE6F2FF),
+            shape = RoundedCornerShape(8.dp),
+            modifier = clickMod
+                .widthIn(min = 120.dp, max = targetMax) // ← узенько-узенько
+        ) {
+            Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                Box(
+                    Modifier
+                        .width(3.dp)
+                        .heightIn(min = 22.dp)
+                        .background(Color(0xFF3DA5F5))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f, fill = false)) {
+                    Text(
+                        author,
+                        color = Color(0xFF1976D2),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Text(
+                        text,
+                        color = Color(0xFF1B1B1B),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
             }
         }
     }
 }
+
 
 
 
