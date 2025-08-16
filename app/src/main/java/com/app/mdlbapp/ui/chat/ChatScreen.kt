@@ -123,6 +123,9 @@ import com.app.mdlbapp.data.chat.ForwardPayload
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import kotlin.math.max
 
 // ——— моделька поиска ———
 data class Hit(val msgIndex: Int, val range: IntRange)
@@ -2465,7 +2468,7 @@ private fun ChatBubble(
                         )
                         Spacer(Modifier.height(4.dp))
                     }
-                    BubbleMeasured(
+                    BubbleMeasuredPretty(
                         text = message.text,
                         mine = mine,
                         at = message.at,
@@ -2480,18 +2483,182 @@ private fun ChatBubble(
 }
 
 @Composable
+private fun BubbleMeasuredPretty(
+    text: String,
+    mine: Boolean,
+    at: com.google.firebase.Timestamp?,
+    seen: Boolean,
+    highlightRange: IntRange?,
+    edited: Boolean
+) {
+    // всё берём ЗДЕСЬ, в композиции, а в measure-блок только передаём
+    val metaColor      = Color(0x99000000)
+    val bodyTextStyle  = MaterialTheme.typography.bodyLarge
+    val metaTextStyle  = MaterialTheme.typography.labelSmall
+    val measurer       = rememberTextMeasurer()
+    val density        = LocalDensity.current
+
+    val padStart = 12.dp
+    val padTop   = 6.dp
+    val padEnd   = 10.dp
+    val padBottomSingle = 8.dp
+    val padBottomMulti  = 6.dp
+    val gapMetaTopMulti = 2.dp
+    val inlineGap       = 6.dp
+
+    @Composable
+    fun MetaStampInside(mod: Modifier = Modifier) {
+        Row(mod, verticalAlignment = Alignment.CenterVertically) {
+            if (edited) {
+                Text("изменено", style = metaTextStyle, color = metaColor)
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(formatHmLocal(at), style = metaTextStyle, color = metaColor)
+            if (mine) {
+                Spacer(Modifier.width(6.dp))
+                val icon = if (seen) Icons.Filled.DoneAll else Icons.Filled.Done
+                Icon(icon, null, tint = metaColor, modifier = Modifier.size(14.dp))
+            }
+        }
+    }
+
+    @Composable
+    fun MetaFooterChip() {
+        Surface(color = Color(0x14000000), shape = RoundedCornerShape(8.dp)) {
+            MetaStampInside(Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+        }
+    }
+
+    SubcomposeLayout { constraints ->
+        // 1) меряем мету (ширина/высота для однострочного случая)
+        val metaPlaceables = subcompose("metaMeasure") { MetaStampInside() }
+            .map { it.measure(Constraints()) }
+        val metaW = metaPlaceables.maxOfOrNull { it.width } ?: 0
+        val metaH = metaPlaceables.maxOfOrNull { it.height } ?: 0
+
+        val padStartPx = with(density) { padStart.toPx() }.toInt()
+        val padEndPx   = with(density) { padEnd.toPx()   }.toInt()
+        val padTopPx   = with(density) { padTop.toPx()   }.toInt()
+        val padBottomSinglePx = with(density) { padBottomSingle.toPx() }.toInt()
+        val padBottomMultiPx  = with(density) { padBottomMulti.toPx()  }.toInt()
+        val gapMetaTopMultiPx = with(density) { gapMetaTopMulti.toPx() }.toInt()
+        val inlineGapPx       = with(density) { inlineGap.toPx()       }.toInt()
+
+        val maxW = constraints.maxWidth
+
+        // 2) проверяем: поместится ли текст в 1 строку, если справа оставить место под мету
+        val reservePx = metaW + inlineGapPx
+        val availableForTextPxInline = (maxW - padStartPx - reservePx).coerceAtLeast(1)
+
+        val measureInline = measurer.measure(
+            text = buildHighlighted(text, highlightRange),
+            style = bodyTextStyle,
+            constraints = Constraints(maxWidth = availableForTextPxInline)
+        )
+        val isSingleLine = measureInline.lineCount <= 1
+
+        if (isSingleLine) {
+            // ───── одна строка: мета в той же строке справа ─────
+            val textPl = subcompose("text1l") {
+                Box(
+                    Modifier.padding(
+                        start = padStart, top = padTop,
+                        end = with(density) { reservePx.toDp() }, bottom = padBottomSingle
+                    )
+                ) {
+                    Text(
+                        text = buildHighlighted(text, highlightRange),
+                        color = Color(0xFF1B1B1B),
+                        style = bodyTextStyle
+                    )
+                }
+            }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+
+            val bodyW = textPl.maxOfOrNull { it.width } ?: 0
+            val bodyH = textPl.maxOfOrNull { it.height } ?: 0
+
+            val width  = maxOf(bodyW, padStartPx + reservePx) + padEndPx
+            val height = maxOf(bodyH, padTopPx + metaH + padBottomSinglePx)
+
+            layout(width, height) {
+                textPl.forEach { it.place(0, 0) }
+                val metaX = width - metaW - padEndPx
+                val metaY = height - metaH - (padBottomSinglePx / 2)
+                metaPlaceables.forEach { it.place(metaX, metaY) }
+            }
+        } else {
+            // ───── несколько строк: мета как подпись-чип снизу справа ─────
+            val textPl = subcompose("textMl") {
+                Box(
+                    Modifier.padding(
+                        start = padStart, top = padTop,
+                        end = padEnd, bottom = padBottomMulti
+                    )
+                ) {
+                    Text(
+                        text = buildHighlighted(text, highlightRange),
+                        color = Color(0xFF1B1B1B),
+                        style = bodyTextStyle
+                    )
+                }
+            }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+
+            val footerPl = subcompose("metaFooter") { MetaStampInside() } //MetaFooterChip() еще возможен
+                .map { it.measure(Constraints(maxWidth = maxW - padStartPx - padEndPx)) }
+
+            val bodyW = textPl.maxOfOrNull { it.width } ?: 0
+            val bodyH = textPl.maxOfOrNull { it.height } ?: 0
+            val footerW = footerPl.maxOfOrNull { it.width } ?: 0
+            val footerH = footerPl.maxOfOrNull { it.height } ?: 0
+
+            val width  = maxOf(bodyW, padStartPx + footerW + padEndPx)
+            val height = bodyH + gapMetaTopMultiPx + footerH
+
+            layout(width, height) {
+                textPl.forEach { it.place(0, 0) }
+                val fx = width - padEndPx - footerW
+                val fy = bodyH + gapMetaTopMultiPx
+                footerPl.forEach { it.place(fx, fy) }
+            }
+        }
+    }
+}
+
+
+
+@Composable
 private fun ForwardHeader(name: String, photo: String?) {
     Row(
         Modifier.padding(start = 8.dp, top = 8.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("Переслано от", style = MaterialTheme.typography.labelSmall, color = Color(0x99000000))
-        Spacer(Modifier.width(6.dp))
+        // маленький аватар, чтобы не распирало пузырёк
         PeerAvatar(photo, name, 18.dp)
         Spacer(Modifier.width(6.dp))
-        Text(name, color = Color(0xFF1976D2), style = MaterialTheme.typography.labelLarge)
+
+        // две строчки: "Переслано от" + имя
+        Column(
+            modifier = Modifier.weight(1f, fill = false),
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            Text(
+                "Переслано от",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0x99000000),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                name,
+                style = MaterialTheme.typography.labelLarge,
+                color = Color(0xFF1976D2),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
+
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
