@@ -762,6 +762,13 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         messages.mapIndexed { idx, m -> m.id to idx }.toMap()
     }
 
+    // как пощёлкать пины: null -> (n-2) -> ... -> 0 -> null
+    fun nextPinIndex(cur: Int?, n: Int): Int? = when {
+        n <= 0      -> null
+        cur == null -> if (n == 1) 0 else n - 2    // первый тык: сразу ко "второму с конца"
+        cur > 0     -> cur - 1                      // дальше идём: #2 -> #1
+        else        -> null                         // было #1 -> выходим в "без номера"
+    }
 
     // Скролл и подсветка
     fun scrollToMid(mid: String?) {
@@ -1017,23 +1024,26 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                             val n = pinsForMe.size
                             if (n == 0) return@PinnedBanner
 
-                            // Телеграм-цикл:
-                            // null  -> n-1 (самый новый)
-                            // k>0   -> k-1 (идём к более старым)
-                            // k==0  -> null (режим без номера) + сразу прыжок к самому новому
-                            val nextIdx: Int? = when (val cur = pinIdx) {
-                                null -> n - 1
-                                in 1..Int.MAX_VALUE -> cur - 1
-                                else -> null // было #1 → выходим в «без номера»
+                            // 1) Куда скроллим СЕЙЧАС (по текущему состоянию pinIdx):
+                            val scrollMid = when (pinIdx) {
+                                null -> pinsForMe.last().mid            // были «без номера» → прыжок к самому новому
+                                else -> pinsForMe[pinIdx!!].mid         // были в #k → прыжок к #k
                             }
-                            pinIdx = nextIdx
+                            scrollToMid(scrollMid)
 
-                            val targetMid = nextIdx?.let { pinsForMe[it].mid } ?: pinsForMe.last().mid
-                            scrollToMid(targetMid)      // подсветка у вас уже есть внутри
+                            // 2) Что ПОКАЖЕМ СЛЕДУЮЩИМ (обновляем «номерок» в плашке):
+                            pinIdx = when {
+                                n <= 1          -> null                 // один пин — всегда без номера
+                                pinIdx == null  -> n - 2                // с «без номера» → сразу к #2
+                                pinIdx!! > 0    -> pinIdx!! - 1         // #k → #(k-1)
+                                else            -> null                 // было #1 → обратно в «без номера»
+                            }
                         }
                     )
                 }
             }
+
+
 
             // ─────────── ВСПЛЫВАЮЩЕЕ МЕНЮ (центрируем по пузырю, клампим по экрану, лёгкий скрим) ───────────
             val selectedMsg = remember(selectedMsgId, messages) { messages.find { it.id == selectedMsgId } }
