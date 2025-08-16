@@ -1,4 +1,7 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class
+)
 
 package com.app.mdlbapp.ui.chat
 
@@ -12,9 +15,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -25,19 +30,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Mood
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -56,25 +67,37 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.zIndex
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import com.app.mdlbapp.data.chat.ChatMessage
 import com.app.mdlbapp.data.chat.ChatRepository
+import com.app.mdlbapp.data.chat.ReplyPayload
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FieldValue
@@ -88,6 +111,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
+import androidx.compose.ui.unit.IntSize
+import com.app.mdlbapp.data.chat.ForwardPayload
+import kotlin.math.roundToInt
 
 // ——— моделька поиска ———
 data class Hit(val msgIndex: Int, val range: IntRange)
@@ -96,6 +122,9 @@ sealed class ChatRow {
     data class Header(val date: java.time.LocalDate) : ChatRow()
     data class Msg(val msgIndex: Int) : ChatRow()
 }
+
+data class RectF(val left: Float, val top: Float, val right: Float, val bottom: Float)
+
 
 // ┌───────────────────────────────────────────────────────────────────┐
 // │                 ВХОДНЫЕ ЭКРАНЫ (мамочка/малыш)                    │
@@ -135,19 +164,134 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     val me = FirebaseAuth.getInstance().currentUser?.uid ?: return
     val scope = rememberCoroutineScope()
 
-    // — ДАННЫЕ ЧАТА
+    // ссылка на корень чата
+    val chatRef = Firebase.firestore.collection("chats")
+        .document("${mommyUid}_${babyUid}")
+
     val allMessages by ChatRepository.messagesFlow(mommyUid, babyUid)
         .collectAsState(initial = emptyList())
+    // отметка "до какого момента я всё стёр" (персональная)
 
-// отметка "до какого момента я всё стёр" (персональная)
     var myClearedAtMs by remember { mutableStateOf<Long?>(null) }
 
-// показываем ТОЛЬКО те сообщения, что новее моей отметки очистки
+
+    // показываем ТОЛЬКО те сообщения, что новее моей отметки очистки
     val messages = remember(allMessages, myClearedAtMs) {
         val cut = myClearedAtMs ?: Long.MIN_VALUE
         allMessages.filter { (it.at?.toDate()?.time ?: Long.MIN_VALUE) > cut }
     }
 
+    // пины чата
+    val pins by ChatRepository.pinsFlow(mommyUid, babyUid).collectAsState(initial = emptyList())
+    val pinnedSet = remember(pins) { pins.map { it.mid }.toSet() }
+    val visibleIds = remember(messages) { messages.map { it.id }.toSet() }
+    // мапа: id сообщения -> его время (для сортировки пинов)
+    val msgTimeById = remember(messages) {
+        messages.associate { it.id to (it.at?.toDate()?.time ?: Long.MIN_VALUE) }
+    }
+
+    val msgOrderById = remember(messages) {
+        messages.mapIndexed { idx, m -> m.id to idx }.toMap()
+    }
+
+    // пины, видимые мне, отсортированы по времени сообщений: от старых к новым
+    // пины, видимые мне, отсортированы по времени сообщений: от НОВЫХ к СТАРЫМ
+    val pinsForMe = remember(pins, visibleIds, msgTimeById, msgOrderById) {
+        pins
+            .filter { it.mid in visibleIds }
+            .sortedWith(
+                compareBy(
+                    { msgTimeById[it.mid] ?: Long.MIN_VALUE }, // ← время СООБЩЕНИЯ
+                    { msgOrderById[it.mid] ?: Int.MIN_VALUE },
+                    { it.mid }
+                )
+            ) // индекс 0 — самый старый, lastIndex — самый новый
+    }
+    val pinnedSetForMe = remember(pinsForMe) { pinsForMe.map { it.mid }.toSet() }
+
+    // — состояние плашечки
+    var pinnedBarH by remember { mutableStateOf(0) }
+    val chatId = "${mommyUid}_${babyUid}"
+
+
+    // текущий шаг = индекс в pinsForMe: 0..n-1 (0 — самый старый, n-1 — самый новый)
+    var pinIdx by rememberSaveable(chatId) { mutableStateOf<Int?>(null) }
+
+    // Помогаем «удержаться» за тот же mid, если список пинов поменялся
+    var prevPinMids by remember(chatId) { mutableStateOf(emptyList<String>()) }
+    LaunchedEffect(pinsForMe) {
+        val mids = pinsForMe.map { it.mid }
+        pinIdx = pinIdx?.let { old ->
+            val oldMid = prevPinMids.getOrNull(old)
+            val newIndex = mids.indexOf(oldMid)
+            if (newIndex >= 0) newIndex else null   // если пин исчез — уходим в «без номера»
+        }
+        prevPinMids = mids
+    }
+
+    // 💡 создать корень чата заранее (иначе правила не пускают читать несуществующий doc)
+    LaunchedEffect(mommyUid, babyUid) {
+        try { ensureChatRoot(chatRef, mommyUid, babyUid) } catch (_: Exception) {}
+    }
+
+
+    // — ДАННЫЕ ЧАТА
+
+
+    val forward: ForwardPayload? = null
+    var forwarding by remember { mutableStateOf<ForwardPayload?>(null) }
+
+    var flashHighlightedId by remember { mutableStateOf<String?>(null) }
+    var flashJob by remember { mutableStateOf<Job?>(null) }
+
+    fun flashMessage(id: String) {
+        flashJob?.cancel()
+        flashHighlightedId = id
+        flashJob = scope.launch {
+            kotlinx.coroutines.delay(2200)      // «несколько секунд»
+            if (flashHighlightedId == id) flashHighlightedId = null
+        }
+    }
+
+    var selectedMsgId by remember { mutableStateOf<String?>(null) }
+    var selectedRect by remember { mutableStateOf<RectF?>(null) }
+
+    // самый новый закреп всегда первый после asReversed()
+    val newestPinnedMid = pinsForMe.firstOrNull()?.mid
+
+// сниппет для плашки — текст самого нового закреплённого сообщения
+    val bannerSnippet = newestPinnedMid
+        ?.let { id -> messages.find { it.id == id }?.text ?: "Сообщение удалено" }
+        ?: ""
+
+    // номер в заголовке — позиция сообщения в ленте (а не номер среди закрепов)
+    fun bannerNumberLabel(): String =
+        newestPinnedMid
+            ?.let { mid -> msgOrderById[mid] }     // 0..N-1
+            ?.let { "#${it + 1}" }                 // человекочитаемо: #1..#N
+            ?: ""
+
+
+// авточистка: если пин указывает на удалённое сообщение — снимем его тихонечко
+    LaunchedEffect(pins, allMessages) {
+        val allIds = allMessages.map { it.id }.toSet()
+        pins.filter { it.mid !in allIds }.forEach {
+            try { ChatRepository.removePin(mommyUid, babyUid, it.mid) } catch (_: Exception) {}
+        }
+    }
+
+    // Какой mid сейчас показывать в плашке:
+    // если pinIdx == null → всегда самый новый, иначе — выбранный
+    val newestIdx = pinsForMe.lastIndex
+    val shownIdx = pinIdx ?: newestIdx
+    val shownMid = pinsForMe.getOrNull(shownIdx)?.mid
+
+    val shownText = shownMid
+        ?.let { id -> messages.find { it.id == id }?.text ?: "Сообщение удалено" }
+        ?: ""
+
+    // Номер показываем только когда мы «внутри» просмотра
+    val titleText = pinIdx?.let { "#${it + 1}" } ?: ""
 
     val listState = rememberLazyListState()
     val density = LocalDensity.current
@@ -169,7 +313,6 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     // — UI СОСТОЯНИЯ
     var menuOpen by remember { mutableStateOf(false) }
     var bottomBarH by remember { mutableStateOf(0) }
-    var inputHeightPx by remember { mutableStateOf(0) }
     var draft by remember { mutableStateOf("") }
     var datePickerOpen by remember { mutableStateOf(false) }
 
@@ -178,9 +321,9 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 
     val ctx = androidx.compose.ui.platform.LocalContext.current
 
-    var contextForMsg by remember { mutableStateOf<Int?>(null) }   // какая «моя» пузырька открыта
     var deleteConfirmForId by remember { mutableStateOf<String?>(null) } // спрашиваем, удалять ли
 
+    var replyingTo by remember { mutableStateOf<ChatMessage?>(null) }
 
     // — ПОИСК
     var searchActive by remember { mutableStateOf(false) }
@@ -199,10 +342,8 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     var idleClearJob by remember { mutableStateOf<Job?>(null) }
 
     // — ССЫЛКИ НА ДОКИ
-    val chatId = "${mommyUid}_${babyUid}"
-    val chatRef = remember(mommyUid, babyUid) {
-        Firebase.firestore.collection("chats").document(chatId)
-    }
+
+
 
     // — ЦВЕТОЧКИ
     val chatBg = Color(0xFFFFF3EE)
@@ -250,32 +391,57 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         }
     }
 
+    // идет ли прокрутка сейчас
+    val isScrolling by remember(listState) { derivedStateOf { listState.isScrollInProgress } }
 
+    // управляемая видимость бейджа
+    var showDateBadge by remember { mutableStateOf(false) }
 
+    LaunchedEffect(pinsForMe.isEmpty()) {
+        if (pinsForMe.isEmpty()) pinnedBarH = 0
+    }
 
+    // показывать во время скролла, и скрывать через 1.5с после остановки
+    LaunchedEffect(isScrolling, topBadgeDate) {
+        if (topBadgeDate == null) {
+            showDateBadge = false
+            return@LaunchedEffect
+        }
+        if (isScrolling) {
+            showDateBadge = true
+        } else {
+            val captured = topBadgeDate           // чтобы не мигать, если дата успела поменяться
+            delay(1500)
+            if (!listState.isScrollInProgress && topBadgeDate == captured) {
+                showDateBadge = false
+            }
+        }
+    }
 
     // ───────────────────── ЭФФЕКТЫ И ЛИСТЕНЕРЫ ──────────────────────
 
     // Подписка на профиль собеседника (имя/фото/онлайн)
-    LaunchedEffect(peerUid) {
-        Firebase.firestore.collection("users").document(peerUid)
+    DisposableEffect(peerUid) {
+        val reg = Firebase.firestore.collection("users").document(peerUid)
             .addSnapshotListener { snap, _ ->
                 peerName = snap?.getString("displayName").orEmpty()
                 peerPhoto = snap?.getString("photoDataUrl") ?: snap?.getString("photoUrl")
                 peerOnline = snap?.getBoolean("isOnline") == true
                 peerLastSeen = snap?.getTimestamp("lastSeenAt")
             }
+        onDispose { reg.remove() }
     }
 
     // Подписка на мой профиль (имя/фото)
-    LaunchedEffect(me) {
-        Firebase.firestore.collection("users").document(me)
+    DisposableEffect(me) {
+        val reg = Firebase.firestore.collection("users").document(me)
             .addSnapshotListener { snap, _ ->
                 meName = snap?.getString("displayName") ?: "Вы"
                 mePhoto = snap?.getString("photoDataUrl")
                     ?: snap?.getString("photoUrl")
                             ?: FirebaseAuth.getInstance().currentUser?.photoUrl?.toString()
             }
+        onDispose { reg.remove() }
     }
 
     // Создадим корневой doc чата (merge)
@@ -587,6 +753,27 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         lastQuery = ""
     }
 
+
+
+
+
+    // Мапа id -> индекс в списке для быстрого скролла
+    val midToIndex = remember(messages) {
+        messages.mapIndexed { idx, m -> m.id to idx }.toMap()
+    }
+
+
+    // Скролл и подсветка
+    fun scrollToMid(mid: String?) {
+        val msgIdx = mid?.let { midToIndex[it] } ?: return
+        val rowIdx = rowIndexForMessage(msgIdx)
+        val offsetPx = -20  // можно: -with(density){16.dp.roundToPx()} если хочется dp
+        scope.launch {
+            listState.animateScrollToItem(rowIdx, offsetPx)
+            flashMessage(mid)
+        }
+    }
+
     // ─────────────────────────── UI ────────────────────────────────
 
     androidx.compose.material3.Scaffold(
@@ -693,10 +880,12 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         ) {
             val bottomPad = with(density) { (bottomBarH + imeBottomPx).toDp() } + 8.dp
 
+            val topExtraPad = with(density) { pinnedBarH.toDp() } + 8.dp
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = bottomPad)
+                contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp + topExtraPad, bottom = bottomPad)
             ) {
                 items(
                     count = rows.size,
@@ -737,19 +926,232 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                             }
                             val selected = searchActive && (selectedMsgIndex == index)
 
-                            ChatBubble(
-                                message = m,
-                                mine = mine,
-                                showAvatar = !mine && isLastInGroup,
-                                peerName = peerName,
-                                peerPhoto = peerPhoto,
-                                highlightRange = if (searchActive && searchQuery.isNotBlank()) perMessageHit[index] else null,
-                                selected = selected
+                            val density = LocalDensity.current
+                            var myRect by remember { mutableStateOf<RectF?>(null) }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onGloballyPositioned { coords ->
+                                        val pos = coords.positionInRoot()
+                                        val sz = coords.size
+                                        myRect = RectF(
+                                            left = pos.x,
+                                            top  = pos.y,
+                                            right = pos.x + sz.width,
+                                            bottom = pos.y + sz.height
+                                        )
+                                    }
+                                    .animateItemPlacement() // мягко переставляемся
+                            ) {
+
+                                val isPinnedForMe = pinnedSetForMe.contains(m.id)
+                                val isPinService = isPinServiceText(m.text)
+                                if (isPinService) {
+                                    // центрированный «чипчик» вместо пузырька
+                                    CenterSystemChip(text = m.text)
+                                } else {
+                                    val isPinnedForMe = pinnedSetForMe.contains(m.id)
+                                    ChatBubble(
+                                        message = m,
+                                        mine = mine,
+                                        showAvatar = !mine && isLastInGroup,
+                                        peerName = peerName,
+                                        peerPhoto = peerPhoto,
+                                        highlightRange = if (searchActive && searchQuery.isNotBlank()) perMessageHit[index] else null,
+                                        selected = (searchActive && (selectedMsgIndex == index)) || (flashHighlightedId == m.id),
+                                        onTap = {
+                                            val r = myRect
+                                            if (r != null) {
+                                                selectedMsgId = m.id
+                                                selectedRect = r
+                                            } else {
+                                                Toast.makeText(
+                                                    ctx,
+                                                    "Еще меряем, тапни ещё разик 🫶",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        },
+                                        meUid = me,
+                                        meName = meName,
+                                        onReplyAnchorClick = { anchorMid ->
+                                            val targetIdx =
+                                                messages.indexOfFirst { it.id == anchorMid }
+                                            if (targetIdx >= 0) {
+                                                scope.launch {
+                                                    val row = rowIndexForMessage(targetIdx)
+                                                    listState.animateScrollToItem(row, -20)
+                                                    flashMessage(messages[targetIdx].id)                        // вспыхнули
+                                                }
+                                            } else {
+                                                Toast.makeText(
+                                                    ctx,
+                                                    "Того сообщения уже нет здесь",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        },
+                                        isPinned = isPinnedForMe
+                                    )
+                                }
+                            }
+
+                        }
+                    }
+                }
+            }
+
+            // ВЕРХНЯЯ ПЛАНОЧКА
+            if (pinsForMe.isNotEmpty()) {
+                Column(
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 6.dp, start = 8.dp, end = 8.dp)
+                        .onSizeChanged { pinnedBarH = it.height }
+                ) {
+                    PinnedBanner(
+                        title   = titleText,
+                        snippet = shownText,
+                        onClick = {
+                            val n = pinsForMe.size
+                            if (n == 0) return@PinnedBanner
+
+                            // Телеграм-цикл:
+                            // null  -> n-1 (самый новый)
+                            // k>0   -> k-1 (идём к более старым)
+                            // k==0  -> null (режим без номера) + сразу прыжок к самому новому
+                            val nextIdx: Int? = when (val cur = pinIdx) {
+                                null -> n - 1
+                                in 1..Int.MAX_VALUE -> cur - 1
+                                else -> null // было #1 → выходим в «без номера»
+                            }
+                            pinIdx = nextIdx
+
+                            val targetMid = nextIdx?.let { pinsForMe[it].mid } ?: pinsForMe.last().mid
+                            scrollToMid(targetMid)      // подсветка у вас уже есть внутри
+                        }
+                    )
+                }
+            }
+
+            // ─────────── ВСПЛЫВАЮЩЕЕ МЕНЮ (центрируем по пузырю, клампим по экрану, лёгкий скрим) ───────────
+            val selectedMsg = remember(selectedMsgId, messages) { messages.find { it.id == selectedMsgId } }
+
+            if (selectedMsgId != null && selectedRect != null && selectedMsg != null) {
+                var rootSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+                var menuSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+
+                // Перекрывающий слой (ловит тап вне меню и даёт лёгкое затемнение)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(10f)
+                        .onGloballyPositioned { rootSize = it.size }
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = {
+                                selectedMsgId = null
+                                selectedRect = null
+                            })
+                        }
+                ) {
+                    // Едва заметный общий скрим по всему экрану
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = 0.06f)) // «капелька» затемнения
+                    )
+
+                    val r = selectedRect!!
+
+                    // Желанная позиция — центрируем меню относительно выбранного пузыря
+                    val desiredX = (((r.left + r.right) / 2f) - menuSize.width / 2f).roundToInt()
+                    val desiredY = (((r.top  + r.bottom) / 2f) - menuSize.height / 2f).roundToInt()
+
+                    // Клампим в пределах экрана
+                    val clampedX = desiredX.coerceIn(0, (rootSize.width  - menuSize.width ).coerceAtLeast(0))
+                    val clampedY = desiredY.coerceIn(0, (rootSize.height - menuSize.height).coerceAtLeast(0))
+
+                    // Само меню
+                    Popup(
+                        alignment = Alignment.TopStart,
+                        offset = IntOffset(clampedX, clampedY),
+                        properties = PopupProperties(
+                            focusable = true,
+                            dismissOnClickOutside = true,
+                            excludeFromSystemGesture = true
+                        ),
+                        onDismissRequest = {
+                            selectedMsgId = null
+                            selectedRect = null
+                        }
+                    ) {
+                        // Сначала меряем — затем корректная центровка/кламп
+                        Box(Modifier.onGloballyPositioned { menuSize = it.size }) {
+                            val readLine: String? = selectedMsg.let { m ->
+                                // показываем только для СВОИХ сообщений, которые реально прочитал собеседник
+                                if (m.fromUid == me && m.seen && m.seenAt != null)
+                                    "Прочитано в ${formatHmLocal(m.seenAt)}"
+                                else null
+                            }
+                            val isPinned = pinnedSet.contains(selectedMsg.id)
+                            MessageContextMenu(
+                                headerText = readLine,
+                                onReply = {
+                                    replyingTo = selectedMsg
+                                    selectedMsgId = null
+                                    selectedRect = null
+                                },
+                                onCopy = {
+                                    copyToClipboard(selectedMsg.text)
+                                    selectedMsgId = null
+                                    selectedRect = null
+                                },
+                                onForward = {
+                                    forwarding = ForwardPayload(
+                                        fromUid  = selectedMsg.fromUid,
+                                        fromName = if (selectedMsg.fromUid == me) meName else peerName,
+                                        fromPhoto= if (selectedMsg.fromUid == me) mePhoto else peerPhoto,
+                                        text     = selectedMsg.text
+                                    )
+                                    replyingTo = null                      // одновременно и «ответ» и «переслать» не держим
+                                    selectedMsgId = null; selectedRect = null
+                                },
+                                onPin = {
+                                    scope.launch {
+                                        ensureChatRoot(chatRef, mommyUid, babyUid)
+
+                                        try {
+                                            if (isPinned) {
+                                                ChatRepository.removePin(mommyUid, babyUid, selectedMsg.id)
+                                                ChatRepository.sendText(mommyUid, babyUid, fromUid = me, toUid = peerUid, text = "$meName открепил(а) сообщение")
+                                            } else {
+                                                ChatRepository.addPin(mommyUid, babyUid, selectedMsg.id, me)
+                                                ChatRepository.sendText(mommyUid, babyUid, fromUid = me, toUid = peerUid, text = "$meName закрепил(а) сообщение 📌")
+                                            }
+                                        } catch (e: Exception) {
+                                            Toast.makeText(ctx, "Не получилось: ${e.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                    selectedMsgId = null; selectedRect = null
+                                },
+                                pinTitle = if (isPinned) "Открепить" else "Закрепить",
+                                onEdit = {
+                                    Toast.makeText(ctx, "Редактировать нельзя (правила Firestore)", Toast.LENGTH_SHORT).show()
+                                    selectedMsgId = null
+                                    selectedRect = null
+                                },
+                                onDelete = {
+                                    deleteConfirmForId = selectedMsg.id
+                                    selectedMsgId = null
+                                    selectedRect = null
+                                }
                             )
                         }
                     }
                 }
             }
+
 
             val bottomSafePad = with(density) { (bottomBarH + imeBottomPx).toDp() } + 12.dp
             AnimatedVisibility(
@@ -824,11 +1226,38 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     onSend = {
                         val to = if (me == mommyUid) babyUid else mommyUid
                         scope.launch {
-                            ChatRepository.sendText(mommyUid, babyUid, me, to, draft)
-                            draft = ""
-                            chatRef.update("typing.$me", FieldValue.delete())
+                            try {
+                                ensureChatRoot(chatRef, mommyUid, babyUid)
+                                if (draft.isNotBlank()) {
+                                    ChatRepository.sendText(
+                                        mommyUid, babyUid,
+                                        fromUid = me, toUid = to,
+                                        text = draft,
+                                        reply = replyingTo?.let { ReplyPayload(it.id, it.fromUid, it.text.take(200)) }
+                                    )
+                                }
+                                forwarding?.let { f ->
+                                    ChatRepository.sendText(
+                                        mommyUid, babyUid,
+                                        fromUid = me, toUid = to,
+                                        text = f.text,                     // сам текст пересылаемого сообщения
+                                        forward = f                        // а это «шапочка переслано от»
+                                    )
+                                }
+                                draft = ""; replyingTo = null; forwarding = null
+                                chatRef.update("typing.$me", FieldValue.delete())
+                            } catch (e: Exception) {
+                                Toast.makeText(ctx, "Ой, не вышло: ${e.message}", Toast.LENGTH_LONG).show()
+                            }
                         }
                     },
+                    replyingTo   = replyingTo,
+                    forwardFrom  = forwarding,
+                    meUid        = me,
+                    meName       = meName,
+                    peerName     = peerName,
+                    onCancelReply = { replyingTo = null },
+                    onCancelForward = { forwarding = null },
                     modifier = bottomModifier
                 )
             } else {
@@ -879,10 +1308,13 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 
             // Плавающая дата вверху (как оверлей)
             AnimatedVisibility(
-                visible = topBadgeDate != null,
+                visible = showDateBadge && topBadgeDate != null,
+                enter = fadeIn(),
+                exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 6.dp),
+                    // ниже плашки «Закреплённое сообщение»
+                    .padding(top = with(density) { pinnedBarH.toDp() } + 15.dp)
             ) {
                 topBadgeDate?.let { d ->
                     Surface(color = Color(0x33000000), shape = RoundedCornerShape(12.dp)) {
@@ -1019,11 +1451,72 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
             androidx.compose.material3.DatePicker(state = state)
         }
     }
+
+    if (deleteConfirmForId != null) {
+        AlertDialog(
+            onDismissRequest = { deleteConfirmForId = null },
+            title = { Text("Удалить сообщение?") },
+            text  = { Text("Уйдёт насовсем у обоих. Отменить нельзя.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        try {
+                            deleteMessageById(deleteConfirmForId!!)
+                            Toast.makeText(ctx, "Удалено 🗑️", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(ctx, "Не вышло: ${e.message}", Toast.LENGTH_LONG).show()
+                        } finally {
+                            deleteConfirmForId = null
+                        }
+                    }
+                }) { Text("Удалить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteConfirmForId = null }) { Text("Отмена") }
+            }
+        )
+    }
 }
+
+@Composable
+private fun PinnedBanner(
+    title: String,
+    snippet: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color(0xFFEFF6FF),
+        shadowElevation = 2.dp,
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier.clickable(onClick = onClick)
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.PushPin, null, tint = Color(0xFF1E88E5))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Закреплённое сообщение" + if (title.isNotBlank()) " $title" else "",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color(0xFF1B1B1B)
+                )
+                Text(snippet, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF1B1B1B), maxLines = 1)
+            }
+            Icon(Icons.Filled.ArrowDownward, null, tint = Color(0xFF1E88E5), modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
 
 //«умная» реакция на ввод с задержкой
 // РАСШИРЕНИЕ: «это буква слова?» (учитывает цифры тоже)
 private fun Char.isWordChar(): Boolean = this.isLetterOrDigit()
+
+
+
 
 private suspend fun ensureChatRoot(
     chatRef: DocumentReference,
@@ -1055,6 +1548,29 @@ private fun expandToWord(text: String, start: Int, end: Int): IntRange {
 // ┌───────────────────────────────────────────────────────────────────┐
 // │                          КОМПОНЕНТЫ UI                           │
 /* └───────────────────────────────────────────────────────────────────┘ */
+
+@Composable
+private fun CenterSystemChip(text: String) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            color = Color(0x1A000000),                 // ~10% чёрного — полупрозрачный фон
+            shape = RoundedCornerShape(12.dp),
+            shadowElevation = 0.dp
+        ) {
+            Text(
+                text = text,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.labelLarge,
+                color = Color(0xFF1B1B1B)
+            )
+        }
+    }
+}
 
 // — аватар
 @Composable
@@ -1143,67 +1659,142 @@ private fun InputBarTelegramFullWidth(
     draft: String,
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
+    replyingTo: ChatMessage? = null,
+    forwardFrom: ForwardPayload? = null,
+    onCancelForward: (() -> Unit)? = null,
+    meUid: String = "",
+    meName: String = "Вы",
+    peerName: String = "",
+    onCancelReply: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Surface(
         color = Color.White,
         tonalElevation = 0.dp,
         shadowElevation = 6.dp,
-        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 0.dp, bottomEnd = 0.dp),
+        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
         modifier = modifier
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = { /* TODO: emoji */ }, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Outlined.Mood, null, tint = Color(0x99000000))
+        Column {
+            if (forwardFrom != null) {
+                ForwardPreviewBar(forwardFrom, onCancelForward) // ← НОВОЕ
+                HorizontalDivider(color = Color(0x11000000))
+            }
+            // ─ верхняя полосочка «В ответ …» (если есть)
+            if (replyingTo != null) {
+                ReplyPreviewBar(
+                    author = if (replyingTo.fromUid == meUid) meName else peerName,
+                    snippet = replyingTo.text.take(140),
+                    onClose = onCancelReply
+                )
+                HorizontalDivider(color = Color(0x11000000))
             }
 
-            BasicTextField(
-                value = draft,
-                onValueChange = onDraft,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF1B1B1B)),
-                cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF1B1B1B)),
-                minLines = 1,
-                maxLines = 6,
-                modifier = Modifier
-                    .widthIn(min = 120.dp, max = 260.dp)
-                    .weight(1f)
-                    .padding(horizontal = 6.dp)
-                    .heightIn(min = 46.dp, max = 200.dp),
-                decorationBox = { inner ->
-                    Box(
-                        Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (draft.isBlank()) Text("Сообщение", color = Color(0x99000000), style = MaterialTheme.typography.bodyLarge)
-                        inner()
-                    }
-                }
-            )
-
-            IconButton(onClick = { /* TODO: attach */ }, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Outlined.AttachFile, null, tint = Color(0x99000000))
-            }
-
-            val canSend = draft.isNotBlank()
-            FilledIconButton(
-                onClick = onSend,
-                enabled = canSend,
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = if (canSend) Color(0xFF3DA5F5) else Color(0xFFB0BEC5),
-                    contentColor = Color.White
-                ),
-                modifier = Modifier.size(40.dp)
+            // ─ сам input как и был
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Filled.Send, contentDescription = "Отправить")
+                IconButton(onClick = { /* TODO: emoji */ }, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Outlined.Mood, null, tint = Color(0x99000000))
+                }
+
+                BasicTextField(
+                    value = draft,
+                    onValueChange = onDraft,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF1B1B1B)),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF1B1B1B)),
+                    minLines = 1,
+                    maxLines = 6,
+                    modifier = Modifier
+                        .widthIn(min = 120.dp, max = 260.dp)
+                        .weight(1f)
+                        .padding(horizontal = 6.dp)
+                        .heightIn(min = 46.dp, max = 200.dp),
+                    decorationBox = { inner ->
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                            if (draft.isBlank()) Text("Сообщение", color = Color(0x99000000), style = MaterialTheme.typography.bodyLarge)
+                            inner()
+                        }
+                    }
+                )
+
+                IconButton(onClick = { /* TODO: attach */ }, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Outlined.AttachFile, null, tint = Color(0x99000000))
+                }
+
+                val canSend = draft.isNotBlank() || forwardFrom != null
+                FilledIconButton(
+                    onClick = onSend,
+                    enabled = canSend,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = if (canSend) Color(0xFF3DA5F5) else Color(0xFFB0BEC5),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.size(40.dp)
+                ) { Icon(Icons.Filled.Send, contentDescription = "Отправить") }
             }
         }
     }
 }
+
+@Composable
+private fun ForwardPreviewBar(payload: ForwardPayload, onClose: (() -> Unit)?) {
+    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Send, null, tint = Color(0xFF3DA5F5), modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Переслать 1 сообщение", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.weight(1f))
+            if (onClose != null) IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
+                Icon(Icons.Filled.Close, null, tint = Color(0x99000000))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PeerAvatar(payload.fromPhoto, payload.fromName, 22.dp)
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text(payload.fromName, color = Color(0xFF1976D2), style = MaterialTheme.typography.labelMedium)
+                Text(payload.text.take(140), color = Color(0x99000000), maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReplyPreviewBar(
+    author: String,
+    snippet: String,
+    onClose: (() -> Unit)? = null
+) {
+    Row(
+        Modifier
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // стрелочка как в Telegram
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.Reply,
+            contentDescription = null,
+            tint = Color(0xFF3DA5F5),
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(author, color = Color(0xFF1976D2), style = MaterialTheme.typography.labelLarge)
+            Text(snippet, color = Color(0x99000000), maxLines = 1)
+        }
+        if (onClose != null) {
+            IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
+                Icon(Icons.Filled.Close, null, tint = Color(0x99000000))
+            }
+        }
+    }
+}
+
 
 // — топбар поиска
 @Composable
@@ -1435,8 +2026,13 @@ private fun ChatBubble(
     showAvatar: Boolean,
     peerName: String,
     peerPhoto: String?,
-    highlightRange: IntRange?,     // ⬅️ было String? highlight
+    highlightRange: IntRange?,
     selected: Boolean = false,
+    onTap: (() -> Unit)? = null,
+    meUid: String,
+    meName: String,
+    onReplyAnchorClick: ((String) -> Unit)? = null,
+    isPinned: Boolean = false
 ) {
     val baseColor = if (mine) Color(0xFFDCF7C5) else Color.White
     val selectedColor = if (mine) Color(0xFFE9FFD6) else Color(0xFFFFFDE7)
@@ -1470,18 +2066,81 @@ private fun ChatBubble(
             tonalElevation = 1.dp,
             shadowElevation = if (selected) 2.dp else 0.dp,
             border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF3DA5F5)) else null,
-            modifier = Modifier.widthIn(max = if (mine) 360.dp else 320.dp)
+            modifier = Modifier
+                .widthIn(max = if (mine) 360.dp else 320.dp)
+                .clickable(enabled = onTap != null) { onTap?.invoke() }
         ) {
-            BubbleMeasured(
-                text = message.text,
-                mine = mine,
-                at = message.at,
-                seen = message.seen,
-                highlightRange = highlightRange   // ⬅️ тоже поменяли имя
-            )
+            Column {
+                if (isPinned) {             // ← маленькая скрепочка сверху
+                    Row(Modifier.padding(start = 8.dp, top = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.PushPin, null, modifier = Modifier.size(14.dp), tint = Color(0xFF1E88E5))
+                        Spacer(Modifier.width(4.dp))
+                    }
+                }
+                message.forward?.let { f ->
+                    ForwardHeader(name = f.fromName, photo = f.fromPhoto)
+                    Spacer(Modifier.height(4.dp))
+                }
+
+                // ─ если это ответ — рисуем голубую шапочку
+                message.reply?.let { r ->
+                    ReplyStub(
+                        author = if (r.fromUid == meUid) meName else peerName,
+                        text = r.text,
+                        onClick = { onReplyAnchorClick?.invoke(r.mid) }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                BubbleMeasured(
+                    text = message.text, mine = mine, at = message.at, seen = message.seen, highlightRange = highlightRange
+                )
+            }
         }
     }
 }
+
+@Composable
+private fun ForwardHeader(name: String, photo: String?) {
+    Row(
+        Modifier.padding(start = 8.dp, top = 8.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Переслано от", style = MaterialTheme.typography.labelSmall, color = Color(0x99000000))
+        Spacer(Modifier.width(6.dp))
+        PeerAvatar(photo, name, 18.dp)
+        Spacer(Modifier.width(6.dp))
+        Text(name, color = Color(0xFF1976D2), style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+
+@Composable
+private fun ReplyStub(
+    author: String,
+    text: String,
+    onClick: (() -> Unit)? = null
+) {
+    val clickMod = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+
+    Surface(
+        color = Color(0xFFE6F2FF),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .padding(start = 8.dp, top = 8.dp, end = 8.dp)
+            .then(clickMod)
+    ) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Box(Modifier.width(3.dp).heightIn(min = 24.dp).background(Color(0xFF3DA5F5)))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(author, color = Color(0xFF1976D2), style = MaterialTheme.typography.labelLarge)
+                Text(text, color = Color(0xFF1B1B1B), maxLines = 1)
+            }
+        }
+    }
+}
+
+
 
 @Composable
 private fun BubbleMeasured(
@@ -1605,6 +2264,8 @@ private fun BubbleMeasured(
 // ┌───────────────────────────────────────────────────────────────────┐
 // │                             УТИЛИТЫ                               │
 /* └───────────────────────────────────────────────────────────────────┘ */
+private fun isPinServiceText(t: String): Boolean =
+    t.contains("закрепил(а) сообщение") || t.contains("открепил(а) сообщение")
 
 private fun presenceText(
     isOnline: Boolean,
@@ -1721,5 +2382,116 @@ private fun buildRows(messages: List<ChatMessage>): List<ChatRow> {
     return out
 }
 
+
+@Composable
+private fun ReactionBar(onPick: (String) -> Unit) {
+    val emojis = listOf("❤️","😁","🥰","🤯","😭","👍")
+    Surface(
+        color = Color.White,
+        shape = RoundedCornerShape(20.dp),
+        shadowElevation = 4.dp,
+        modifier = Modifier
+            .padding(horizontal = 8.dp)
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            emojis.forEach { e ->
+                Text(
+                    e,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier
+                        .padding(horizontal = 6.dp)
+                        .clickable { onPick(e) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageContextMenu(
+    headerText: String? = null,
+    onReply: () -> Unit,
+    onCopy: () -> Unit,
+    onForward: () -> Unit,
+    onPin: () -> Unit,
+    pinTitle: String,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Surface(
+        color = Color.White,
+        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 10.dp,
+        border = androidx.compose.foundation.BorderStroke(0.6.dp, Color(0x14000000)),
+        modifier = Modifier
+            .widthIn(min = 170.dp, max = 210.dp) // уже и компактнее
+    ) {
+        Column {
+            // ───────── шапочка «Прочитано в …» (ТОЛЬКО если есть текст) ─────────
+            if (headerText != null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF5F5F5), RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.DoneAll, null, tint = Color(0xFF43A047), modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(headerText, color = Color(0xFF1B1B1B), style = MaterialTheme.typography.labelMedium)
+                }
+                HorizontalDivider(color = Color(0x11000000))
+            }
+
+            // ───────── дальше — обычные кнопочки меню ─────────
+            Column(Modifier.padding(vertical = 4.dp)) {
+                MenuItemRow("Ответить", Icons.AutoMirrored.Filled.Reply, onReply)
+                MenuItemRow("Копировать", Icons.Filled.ContentCopy, onCopy)
+                MenuItemRow("Переслать", Icons.Filled.Send, onForward)
+                MenuItemRow(pinTitle, Icons.Filled.PushPin, onPin)
+                MenuItemRow("Изменить", Icons.Filled.Edit, onEdit)
+                HorizontalDivider(color = Color(0x11000000))
+                MenuItemRowDanger("Удалить", Icons.Filled.DeleteForever, onDelete)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuItemRow(
+    title: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = Color(0xFF424242), modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(title, color = Color(0xFF212121), style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun MenuItemRowDanger(
+    title: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = Color(0xFFD32F2F), modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(title, color = Color(0xFFD32F2F), style = MaterialTheme.typography.bodyMedium)
+    }
+}
 
 
