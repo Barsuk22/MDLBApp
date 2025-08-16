@@ -19,6 +19,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -113,6 +114,7 @@ import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
 import androidx.compose.ui.unit.IntSize
 import com.app.mdlbapp.data.chat.ForwardPayload
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 // ——— моделька поиска ———
@@ -238,8 +240,8 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     // — ДАННЫЕ ЧАТА
 
 
-    val forward: ForwardPayload? = null
     var forwarding by remember { mutableStateOf<ForwardPayload?>(null) }
+    var editing by remember { mutableStateOf<ChatMessage?>(null) }
 
     var flashHighlightedId by remember { mutableStateOf<String?>(null) }
     var flashJob by remember { mutableStateOf<Job?>(null) }
@@ -636,6 +638,47 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         }
     }
 
+    // Плавно и без "прыжков" центрируем нужный ряд
+    suspend fun centerOnRow(rowIndex: Int, biasPx: Int = 0) {
+        if (rowIndex < 0) return
+
+        // 0) текущее окно
+        var info = listState.layoutInfo
+        val viewportH = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
+
+        // есть ли ряд на экране уже сейчас?
+        val visibleItem = info.visibleItemsInfo.firstOrNull { it.index == rowIndex }
+
+        if (visibleItem == null) {
+            // 1) если не видно — СНАП (без анимации) примерно в центр
+            listState.scrollToItem(rowIndex, -(viewportH / 2))
+            // ждём кадрик, чтобы измерить точную позицию
+            withFrameNanos { }
+            info = listState.layoutInfo
+        }
+
+        // 2) точное доведение ОДНОЙ анимацией (или очень короткой, если уже центр)
+        val item = info.visibleItemsInfo.firstOrNull { it.index == rowIndex } ?: return
+        val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2
+        val itemCenter = item.offset + item.size / 2
+        val delta = (itemCenter - viewportCenter + biasPx).toFloat()
+
+        // если уже почти центр — не дёргаем (порог ~ 8dp)
+        val thresholdPx = with(density) { 8.dp.toPx() }
+        if (abs(delta) > thresholdPx) {
+            listState.animateScrollBy(delta)
+        }
+    }
+
+    suspend fun editMessage(mid: String, newText: String) {
+        chatRef.collection("messages").document(mid).update(
+            mapOf(
+                "text" to newText,
+                "edited" to true,
+                "editedAt" to FieldValue.serverTimestamp()
+            )
+        ).await()
+    }
 
     suspend fun jumpTo(hitIndex: Int) {
         if (hits.isEmpty()) return
@@ -643,7 +686,7 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         val idx = ((hitIndex % n) + n) % n
         curHit = idx
         val msgIdx = hits[idx].msgIndex
-        listState.animateScrollToItem(rowIndexForMessage(msgIdx), -20)
+        centerOnRow(rowIndexForMessage(msgIdx))
     }
 
     suspend fun nextOlder(i: Int, size: Int): Int =
@@ -678,12 +721,6 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         Toast.makeText(ctx, "Скопировала в буфер ✂️", Toast.LENGTH_SHORT).show()
     }
 
-    fun replyWithQuote(text: String) {
-        // простая цитатка в поле ввода (без изменения схемы БД)
-        val snippet = text.lines().first().take(140)
-        draft = "↪ $snippet\n" + if (draft.isBlank()) "" else draft
-    }
-
     suspend fun hardWipeChat(chatRef: DocumentReference, chunk: Int = 400) {
         // Удаляем сообщениями порциями (лимит Firestore: 500 операций в батче)
         while (true) {
@@ -703,8 +740,9 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
         if (n == 0) return
         val msgIdx = ((i % n) + n) % n
         curMsg = msgIdx
-        listState.animateScrollToItem(rowIndexForMessage(msgIdx), -20)
+        centerOnRow(rowIndexForMessage(msgIdx))
     }
+
 
     val onPrevClick: () -> Unit = { // ↑
         scope.launch {
@@ -774,9 +812,8 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
     fun scrollToMid(mid: String?) {
         val msgIdx = mid?.let { midToIndex[it] } ?: return
         val rowIdx = rowIndexForMessage(msgIdx)
-        val offsetPx = -20  // можно: -with(density){16.dp.roundToPx()} если хочется dp
         scope.launch {
-            listState.animateScrollToItem(rowIdx, offsetPx)
+            centerOnRow(rowIdx)   // ← только одна! без второй animateScrollToItem
             flashMessage(mid)
         }
     }
@@ -988,7 +1025,7 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                             if (targetIdx >= 0) {
                                                 scope.launch {
                                                     val row = rowIndexForMessage(targetIdx)
-                                                    listState.animateScrollToItem(row, -20)
+                                                    centerOnRow(row)
                                                     flashMessage(messages[targetIdx].id)                        // вспыхнули
                                                 }
                                             } else {
@@ -1147,9 +1184,14 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                 },
                                 pinTitle = if (isPinned) "Открепить" else "Закрепить",
                                 onEdit = {
-                                    Toast.makeText(ctx, "Редактировать нельзя (правила Firestore)", Toast.LENGTH_SHORT).show()
-                                    selectedMsgId = null
-                                    selectedRect = null
+                                    if (selectedMsg.fromUid != me) {
+                                        Toast.makeText(ctx, "Можно редактировать только своё сообщения", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        editing = selectedMsg
+                                        draft = selectedMsg.text                    // кладём исходный текст в инпут
+                                        replyingTo = null; forwarding = null        // нельзя одновременно редактировать и «ответ/переслать»
+                                        selectedMsgId = null; selectedRect = null   // закрываем меню
+                                    }
                                 },
                                 onDelete = {
                                     deleteConfirmForId = selectedMsg.id
@@ -1238,23 +1280,38 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                         scope.launch {
                             try {
                                 ensureChatRoot(chatRef, mommyUid, babyUid)
-                                if (draft.isNotBlank()) {
-                                    ChatRepository.sendText(
-                                        mommyUid, babyUid,
-                                        fromUid = me, toUid = to,
-                                        text = draft,
-                                        reply = replyingTo?.let { ReplyPayload(it.id, it.fromUid, it.text.take(200)) }
-                                    )
+                                if (editing != null) {
+                                    val newText = draft.trim()
+                                    if (newText.isBlank()) {
+                                        Toast.makeText(ctx, "Пустышку нельзя, котик", Toast.LENGTH_SHORT).show()
+                                    } else if (newText == editing!!.text) {
+                                        // ничего не меняем — просто выходим из режима
+                                    } else {
+                                        editMessage(editing!!.id, newText)
+                                    }
+                                    // выходим из режима редактирования
+                                    editing = null
+                                    draft = ""
+                                } else {
+                                    // обычная отправка как было
+                                    if (draft.isNotBlank()) {
+                                        ChatRepository.sendText(
+                                            mommyUid, babyUid,
+                                            fromUid = me, toUid = to,
+                                            text = draft,
+                                            reply = replyingTo?.let { ReplyPayload(it.id, it.fromUid, it.text.take(200)) }
+                                        )
+                                    }
+                                    forwarding?.let { f ->
+                                        ChatRepository.sendText(
+                                            mommyUid, babyUid,
+                                            fromUid = me, toUid = to,
+                                            text = f.text,
+                                            forward = f
+                                        )
+                                    }
+                                    draft = ""; replyingTo = null; forwarding = null
                                 }
-                                forwarding?.let { f ->
-                                    ChatRepository.sendText(
-                                        mommyUid, babyUid,
-                                        fromUid = me, toUid = to,
-                                        text = f.text,                     // сам текст пересылаемого сообщения
-                                        forward = f                        // а это «шапочка переслано от»
-                                    )
-                                }
-                                draft = ""; replyingTo = null; forwarding = null
                                 chatRef.update("typing.$me", FieldValue.delete())
                             } catch (e: Exception) {
                                 Toast.makeText(ctx, "Ой, не вышло: ${e.message}", Toast.LENGTH_LONG).show()
@@ -1268,6 +1325,8 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     peerName     = peerName,
                     onCancelReply = { replyingTo = null },
                     onCancelForward = { forwarding = null },
+                    editing = editing,
+                    onCancelEdit = { editing = null; draft = "" },
                     modifier = bottomModifier
                 )
             } else {
@@ -1354,7 +1413,7 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     scope.launch {
                         curHit = i
                         val msgIdx = hits[curHit].msgIndex
-                        listState.animateScrollToItem(rowIndexForMessage(msgIdx), -20)
+                        centerOnRow(rowIndexForMessage(msgIdx))
                     }
                 },
                 onClose = { showHitsSheet = false }
@@ -1676,7 +1735,9 @@ private fun InputBarTelegramFullWidth(
     meName: String = "Вы",
     peerName: String = "",
     onCancelReply: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    editing: ChatMessage? = null,
+    onCancelEdit: (() -> Unit)? = null,
 ) {
     Surface(
         color = Color.White,
@@ -1686,6 +1747,13 @@ private fun InputBarTelegramFullWidth(
         modifier = modifier
     ) {
         Column {
+            if (editing != null) {
+                EditPreviewBar(
+                    original = editing.text,
+                    onClose = onCancelEdit
+                )
+                HorizontalDivider(color = Color(0x11000000))
+            }
             if (forwardFrom != null) {
                 ForwardPreviewBar(forwardFrom, onCancelForward) // ← НОВОЕ
                 HorizontalDivider(color = Color(0x11000000))
@@ -1863,6 +1931,26 @@ fun ChatSearchTopBarPlain(
             )
         }
     )
+}
+
+@Composable
+private fun EditPreviewBar(original: String, onClose: (() -> Unit)?) {
+    Row(
+        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Filled.Edit, null, tint = Color(0xFF616161), modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Редактирование", color = Color(0xFF616161), style = MaterialTheme.typography.labelLarge)
+            Text(original.take(140), color = Color(0x99000000), maxLines = 1)
+        }
+        if (onClose != null) {
+            IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
+                Icon(Icons.Filled.Close, null, tint = Color(0x99000000))
+            }
+        }
+    }
 }
 
 // — нижняя панель поиска (док)
@@ -2102,7 +2190,12 @@ private fun ChatBubble(
                     Spacer(Modifier.height(4.dp))
                 }
                 BubbleMeasured(
-                    text = message.text, mine = mine, at = message.at, seen = message.seen, highlightRange = highlightRange
+                    text = message.text,
+                    mine = mine,
+                    at = message.at,
+                    seen = message.seen,
+                    highlightRange = highlightRange,
+                    edited = (message.edited == true)
                 )
             }
         }
@@ -2158,7 +2251,8 @@ private fun BubbleMeasured(
     mine: Boolean,
     at: com.google.firebase.Timestamp?,
     seen: Boolean,
-    highlightRange: IntRange?
+    highlightRange: IntRange?,
+    edited: Boolean
 ) {
     val metaColor = Color(0x99000000)
     val density = LocalDensity.current
@@ -2178,6 +2272,10 @@ private fun BubbleMeasured(
     SubcomposeLayout { constraints ->
         val metaPlaceables = subcompose("meta") {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (edited) {
+                    Text("изменено", style = MaterialTheme.typography.labelSmall, color = metaColor)
+                    Spacer(Modifier.width(inlineGapSmall))
+                }
                 Text(
                     text = formatHmLocal(at),
                     style = MaterialTheme.typography.labelSmall,
@@ -2194,6 +2292,7 @@ private fun BubbleMeasured(
                 }
             }
         }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+
         val metaW = metaPlaceables.maxOfOrNull { it.width } ?: 0
         val metaH = metaPlaceables.maxOfOrNull { it.height } ?: 0
 

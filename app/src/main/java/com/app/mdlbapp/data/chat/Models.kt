@@ -15,7 +15,9 @@ data class ChatMessage(
     val seen: Boolean = false,
     val seenAt: com.google.firebase.Timestamp? = null,
     val reply: ReplyPayload? = null,
-    val forward: ForwardPayload? = null
+    val forward: ForwardPayload? = null,
+    val edited: Boolean? = null,
+    val editedAt: com.google.firebase.Timestamp? = null
 )
 
 data class ForwardPayload(
