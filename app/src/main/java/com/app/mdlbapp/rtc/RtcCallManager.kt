@@ -2,6 +2,8 @@ package com.app.mdlbapp.rtc
 
 
 import android.content.Context
+import android.content.Context.AUDIO_SERVICE
+import android.media.AudioManager
 import com.app.mdlbapp.data.call.CallRepository
 import com.app.mdlbapp.data.call.IceBlob
 import com.app.mdlbapp.data.call.SdpBlob
@@ -19,14 +21,30 @@ class RtcCallManager(
     private val peerUid: String,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main)
 ) {
+    companion object {
+        @Volatile private var inited = false
+        private fun ensureInit(ctx: Context) {
+            if (!inited) synchronized(this) {
+                if (!inited) {
+                    PeerConnectionFactory.initialize(
+                        PeerConnectionFactory.InitializationOptions
+                            .builder(ctx).createInitializationOptions()
+                    )
+                    inited = true
+                }
+            }
+        }
+    }
+
     private val egl = EglBase.create()
     private val factory: PeerConnectionFactory by lazy {
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(ctx).createInitializationOptions()
-        )
+        ensureInit(ctx) // <<< ВАЖНО: инициализируем один раз на процесс
         val enc = DefaultVideoEncoderFactory(egl.eglBaseContext, true, true)
         val dec = DefaultVideoDecoderFactory(egl.eglBaseContext)
-        PeerConnectionFactory.builder().setVideoEncoderFactory(enc).setVideoDecoderFactory(dec).createPeerConnectionFactory()
+        PeerConnectionFactory.builder()
+            .setVideoEncoderFactory(enc)
+            .setVideoDecoderFactory(dec)
+            .createPeerConnectionFactory()
     }
 
     private val audioSource = factory.createAudioSource(MediaConstraints())
@@ -46,7 +64,25 @@ class RtcCallManager(
         PeerConnection.RTCConfiguration(
             listOf(
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-                PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer()
+                PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+
+//                // 👇 добавь свой TURN:
+//                PeerConnection.IceServer.builder("turn:YOUR_TURN_HOST:3478")
+//                    .setUsername("YOUR_USER")
+//                    .setPassword("YOUR_PASS")
+//                    .createIceServer()
+
+                // — публичный TURN OpenRelay (UDP через 80) —
+                PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80?transport=udp")
+                    .setUsername("openrelayproject")
+                    .setPassword("openrelayproject")
+                    .createIceServer(),
+
+                // — тот же TURN по TCP через 443 (на случай злых сетей) —
+                PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
+                    .setUsername("openrelayproject")
+                    .setPassword("openrelayproject")
+                    .createIceServer()
             )
         ),
         object : PeerConnection.Observer {
@@ -94,9 +130,12 @@ class RtcCallManager(
         videoTrack.addSink(localView)
     }
 
+    private var mediaAttached = false
     fun attachMedia(sendVideo: Boolean) {
-        pc.addTrack(audioTrack)
-        if (sendVideo) pc.addTrack(videoTrack)
+        if (mediaAttached) return
+        mediaAttached = true
+        try { pc.addTrack(audioTrack) } catch (_: Exception) { }
+        if (sendVideo) try { pc.addTrack(videoTrack) } catch (_: Exception) { }
     }
 
     fun makeOffer(sendVideo: Boolean, onCreated: (String) -> Unit) {
@@ -109,28 +148,82 @@ class RtcCallManager(
             override fun onCreateSuccess(desc: SessionDescription) {
                 pc.setLocalDescription(sdpStub(), desc)
                 scope.launch {
+                    runCatching {
                     val cid = CallRepository.createOutgoingCall(
                         tid, meUid, peerUid, SdpBlob(desc.type.canonical(), desc.description)
                     )
                     currentCallId = cid
                     onCreated(cid)
                     listenRemoteIce(cid)
-                }
+                }.onFailure { e ->
+                        android.widget.Toast
+                            .makeText(ctx, "Не смогла создать звонок: ${e.message}", android.widget.Toast.LENGTH_LONG)
+                            .show()
+                    }
+                    }
             }
         }, mc)
     }
 
     fun acceptOffer(callId: String, offer: SdpBlob, sendVideo: Boolean) {
         currentCallId = callId
-        attachMedia(sendVideo)
-        pc.setRemoteDescription(sdpStub(), SessionDescription(SessionDescription.Type.OFFER, offer.sdp))
-        pc.createAnswer(object : SdpObserver by sdpStub() {
-            override fun onCreateSuccess(desc: SessionDescription) {
-                pc.setLocalDescription(sdpStub(), desc)
-                scope.launch { CallRepository.setAnswer(tid, callId, SdpBlob(desc.type.canonical(), desc.description)) }
-                listenRemoteIce(callId)
+        attachMedia(sendVideo)  // добавим треки (с антидублем см. Патч B ниже)
+
+        val remote = SessionDescription(SessionDescription.Type.OFFER, offer.sdp)
+        pc.setRemoteDescription(object : SdpObserver {
+            override fun onSetSuccess() {
+                // теперь создавать ответ МОЖНО
+                pc.createAnswer(object : SdpObserver {
+                    override fun onCreateSuccess(desc: SessionDescription) {
+                        // сначала локально применяем answer…
+                        pc.setLocalDescription(object : SdpObserver {
+                            override fun onSetSuccess() {
+                                // …и только затем отправляем в Firestore
+                                scope.launch {
+                                    runCatching {
+                                        CallRepository.setAnswer(tid, callId, SdpBlob(desc.type.canonical(), desc.description))
+                                        CallRepository.setState(tid, callId, "connected")
+                                    }.onFailure { e ->
+                                        android.widget.Toast.makeText(
+                                            ctx, "Не смогла отдать answer: ${e.message}", android.widget.Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                                listenRemoteIce(callId)
+                            }
+                            override fun onSetFailure(p0: String?) {
+                                android.widget.Toast.makeText(
+                                    ctx, "Не смогла применить локальный answer: $p0",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                            override fun onCreateSuccess(p0: SessionDescription?) {}
+                            override fun onCreateFailure(p0: String?) {}
+                        }, desc)
+                    }
+
+                    override fun onCreateFailure(err: String?) {
+                        android.widget.Toast.makeText(
+                            ctx, "Не смогла создать answer: $err",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+
+                    override fun onSetSuccess() {}
+                    override fun onSetFailure(p0: String?) {}
+                }, MediaConstraints())
             }
-        }, MediaConstraints())
+
+            override fun onSetFailure(err: String?) {
+                android.widget.Toast.makeText(
+                    ctx, "Не смогла применить offer: $err",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+
+            override fun onCreateSuccess(p0: SessionDescription?) {}
+            override fun onCreateFailure(p0: String?) {}
+        }, remote)
     }
 
     fun setRemoteAnswer(answer: SdpBlob) {
@@ -145,10 +238,18 @@ class RtcCallManager(
         }
     }
 
+    @Volatile private var closed = false
     fun endCall() {
+        if (closed) return
+        closed = true
         try { capturer?.stopCapture() } catch (_: Exception) {}
-        capturer?.dispose(); videoSource.dispose(); audioSource.dispose(); pc.close()
-        localView.release(); remoteView.release(); egl.release()
+        try { capturer?.dispose() } catch (_: Exception) {}
+        try { videoSource.dispose() } catch (_: Exception) {}
+        try { audioSource.dispose() } catch (_: Exception) {}
+        try { pc.close() } catch (_: Exception) {}
+        try { localView.release() } catch (_: Exception) {}
+        try { remoteView.release() } catch (_: Exception) {}
+        try { egl.release() } catch (_: Exception) {}
     }
 
     private fun sdpStub() = object : SdpObserver {
@@ -159,4 +260,13 @@ class RtcCallManager(
     }
     private fun SessionDescription.Type.canonical() =
         if (this == SessionDescription.Type.OFFER) "offer" else "answer"
+
+    fun setMicEnabled(enabled: Boolean) { audioTrack.setEnabled(enabled) }
+    fun setVideoEnabled(enabled: Boolean) { videoTrack.setEnabled(enabled) }
+    fun switchCamera() { (capturer as? CameraVideoCapturer)?.switchCamera(null) }
+    fun setSpeakerphone(on: Boolean) {
+        val am = ctx.getSystemService(AUDIO_SERVICE) as AudioManager
+        am.mode = AudioManager.MODE_IN_COMMUNICATION
+        am.isSpeakerphoneOn = on
+    }
 }

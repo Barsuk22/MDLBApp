@@ -2551,8 +2551,8 @@ private fun BubbleMeasuredPretty(
     val padEnd = 10.dp
     val padBottom = 6.dp
     val inlineGap = 6.dp
-    val pushMin = 4.dp
-    val pushMax = 16.dp
+    val pushMin = 6.dp
+    val pushMax = 22.dp
 
     @Composable
     fun MetaStamp() {

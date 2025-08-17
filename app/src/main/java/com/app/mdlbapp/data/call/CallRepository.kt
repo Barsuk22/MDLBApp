@@ -73,9 +73,9 @@ object CallRepository {
     fun watchIce(tid: String, callId: String) = callbackFlow<IceBlob> {
         val reg = callDocRef(tid, callId).collection("candidates")
             .addSnapshotListener { qs, _ ->
-                qs?.documentChanges?.forEach { dc ->
-                    trySend(dc.document.toObject(IceBlob::class.java))
-                }
+                qs?.documentChanges
+                    ?.filter { it.type == com.google.firebase.firestore.DocumentChange.Type.ADDED }
+                    ?.forEach { dc -> trySend(dc.document.toObject(IceBlob::class.java)) }
             }
         awaitClose { reg.remove() }
     }

@@ -34,6 +34,7 @@ import com.app.mdlbapp.authorization.MommyOnboardingFlow
 import com.app.mdlbapp.authorization.PairCodeScreenBaby
 import com.app.mdlbapp.authorization.PairCodeScreenMommy
 import com.app.mdlbapp.authorization.RoleSelectionScreen
+import com.app.mdlbapp.data.call.CallRepository
 import com.app.mdlbapp.habits.ui.BabyHabitsScreen
 import com.app.mdlbapp.habits.ui.CreateHabitScreen
 import com.app.mdlbapp.habits.ui.EditHabitScreen
@@ -82,6 +83,7 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(Unit) {
                         val uid =
                             FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+
                         val db = Firebase.firestore
 
                         // слушаем только на телефоне Малыша
@@ -220,6 +222,59 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
+                    }
+
+                    LaunchedEffect(startDestination) {
+                        val me = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+                        val db = Firebase.firestore
+                        runCatching {
+                            // найдём tid чата пары (как в WatchIncomingCall)
+                            val pair = db.collection("users").document(me).get().await().getString("pairedWith") ?: return@runCatching
+                            val tid = listOf(
+                                db.collection("chats").whereEqualTo("mommyUid", me).whereEqualTo("babyUid", pair).limit(1).get().await(),
+                                db.collection("chats").whereEqualTo("mommyUid", pair).whereEqualTo("babyUid", me).limit(1).get().await()
+                            ).firstOrNull { !it.isEmpty }?.documents?.first()?.id ?: return@runCatching
+
+                            val ttlMs = 120_000L
+                            db.collection("chats").document(tid).collection("calls")
+                                .whereEqualTo("state", "ringing").get().await()
+                                .documents.forEach { d ->
+                                    val created = d.getTimestamp("createdAt")?.toDate()?.time ?: 0L
+                                    if (created == 0L || System.currentTimeMillis() - created > ttlMs) {
+                                        CallRepository.setState(tid, d.id, "ended") // suspend есть; await внутри.
+                                    }
+                                }
+                        }
+                    }
+
+                    LaunchedEffect(startDestination.value) {
+                        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+                        // ищём наш tid (как в WatchIncomingCall) и подметаем залипшие звонки
+                        runCatching {
+                            val db = Firebase.firestore
+                            val paired = db.collection("users").document(uid).get().await()
+                                .getString("pairedWith") ?: return@runCatching
+                            val q1 = db.collection("chats")
+                                .whereEqualTo("mommyUid", uid).whereEqualTo("babyUid", paired)
+                                .limit(1).get().await()
+                            val q2 = if (q1.isEmpty) db.collection("chats")
+                                .whereEqualTo("mommyUid", paired).whereEqualTo("babyUid", uid)
+                                .limit(1).get().await() else null
+                            val tid = q1.documents.firstOrNull()?.id ?: q2?.documents?.firstOrNull()?.id ?: return@runCatching
+
+                            val calls = db.collection("chats").document(tid).collection("calls")
+                                .whereEqualTo("state", "ringing")
+                                .get().await()
+
+                            val ttlMs = 120_000L
+                            calls.documents.forEach { d ->
+                                val callee = d.getString("calleeUid")
+                                val created = d.getTimestamp("createdAt")?.toDate()?.time ?: 0L
+                                if (callee == uid && (created == 0L || System.currentTimeMillis() - created > ttlMs)) {
+                                    runCatching { CallRepository.setState(tid, d.id, "ended") }
+                                }
+                            }
+                        }
                     }
 
                     // Сеялка (DEBUG)
@@ -421,6 +476,18 @@ class MainActivity : ComponentActivity() {
                                 val asCaller = back.arguments?.getString("asCaller") == "1"
                                 com.app.mdlbapp.ui.call.CallScreen(tid = tid, asCaller = asCaller, navBack = { navController.popBackStack() })
                             }
+                        }
+                        var showWatcher by remember { mutableStateOf(false) }
+                        LaunchedEffect(Unit) {
+                            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+                            val paired = runCatching {
+                                Firebase.firestore.collection("users").document(uid).get().await()
+                                    .getString("pairedWith")
+                            }.getOrNull()
+                            showWatcher = !paired.isNullOrBlank()
+                        }
+                        if (showWatcher) {
+                            WatchIncomingCall(navController)
                         }
                     }
 
