@@ -123,8 +123,16 @@ import com.app.mdlbapp.data.chat.ForwardPayload
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import kotlin.math.max
 
 // ——— моделька поиска ———
@@ -925,9 +933,9 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     },
                     actions = {
                         val ctx = androidx.compose.ui.platform.LocalContext.current
-                        IconButton(onClick = {
-                            Toast.makeText(ctx, "Звонки скоро появятся 🥰", Toast.LENGTH_SHORT).show()
-                        }) { Icon(Icons.Filled.Call, contentDescription = "Звонок") }
+                        IconButton(onClick = { nav.navigate("call/${chatId}/1") }) {
+                            Icon(Icons.Filled.Call, contentDescription = "Звонок")
+                        }
 
                         Box {
                             IconButton(onClick = { menuOpen = true }) {
@@ -971,7 +979,7 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                 .background(chatBg)
                 .padding(top = inner.calculateTopPadding())
         ) {
-            val bottomPad = with(density) { (bottomBarH + imeBottomPx).toDp() } + 8.dp
+            val bottomPad = with(density) { (bottomBarH + imeBottomPx).toDp() } + 2.dp
 
             val topExtraPad = with(density) { pinnedBarH.toDp() } + 8.dp
 
@@ -1019,6 +1027,10 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                             }
                             val selected = searchActive && (selectedMsgIndex == index)
 
+                            val prev = messages.getOrNull(index - 1)
+                            val groupedWithPrev = prev != null && prev.fromUid == m.fromUid
+                            val isLastMessage = index == messages.lastIndex
+
                             val density = LocalDensity.current
                             var myRect by remember { mutableStateOf<RectF?>(null) }
 
@@ -1062,6 +1074,9 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                     // центрированный «чипчик» вместо пузырька
                                     CenterSystemChip(text = m.text)
                                 } else {
+                                    val prev = messages.getOrNull(index - 1)
+                                    val groupedWithPrev = prev != null && prev.fromUid == m.fromUid
+
                                     val isPinnedForMe = pinnedSetForMe.contains(m.id)
                                     ChatBubble(
                                         message = m,
@@ -1069,6 +1084,7 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                         showAvatar = !mine && isLastInGroup,
                                         peerName = peerName,
                                         peerPhoto = peerPhoto,
+                                        isGroupedWithPrev = groupedWithPrev,
                                         highlightRange = if (searchActive && searchQuery.isNotBlank()) perMessageHit[index] else null,
                                         selected = (searchActive && (selectedMsgIndex == index))
                                                 || (flashHighlightedId == m.id)
@@ -1129,7 +1145,8 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                                             replyingTo = m
                                             // можно добавить лёгкую вибрацию/тост при желании
                                         },
-                                        replySwipeRight = false
+                                        replySwipeRight = false,
+                                        isLast = isLastMessage
                                     )
                                 }
                             }
@@ -1931,17 +1948,21 @@ private fun InputBarTelegramFullWidth(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { /* TODO: emoji */ }, modifier = Modifier.size(34.dp)) {
+                IconButton(onClick = { /* TODO: emoji */ }, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Outlined.Mood, null, tint = Color(0x99000000))
                 }
 
                 BasicTextField(
                     value = draft,
                     onValueChange = onDraft,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF1B1B1B)),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 15.sp,
+                        lineHeight = 18.sp,
+                        color = Color(0xFF1B1B1B)
+                    ),
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF1B1B1B)),
                     minLines = 1,
                     maxLines = 6,
@@ -1949,7 +1970,7 @@ private fun InputBarTelegramFullWidth(
                         .widthIn(min = 120.dp, max = 260.dp)
                         .weight(1f)
                         .padding(horizontal = 6.dp)
-                        .heightIn(min = 46.dp, max = 200.dp),
+                        .heightIn(min = 36.dp, max = 110.dp),
                     decorationBox = { inner ->
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                             if (draft.isBlank()) Text("Сообщение", color = Color(0x99000000), style = MaterialTheme.typography.bodyLarge)
@@ -1970,7 +1991,7 @@ private fun InputBarTelegramFullWidth(
                         containerColor = if (canSend) Color(0xFF3DA5F5) else Color(0xFFB0BEC5),
                         contentColor = Color.White
                     ),
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(36.dp)
                 ) { Icon(Icons.Filled.Send, contentDescription = "Отправить") }
             }
         }
@@ -2308,6 +2329,8 @@ private fun ChatBubble(
     onLongSelect:   (() -> Unit)? = null,
     onSwipeReply:   (() -> Unit)? = null,
     replySwipeRight: Boolean = true,
+    isGroupedWithPrev: Boolean,
+    isLast: Boolean
 ) {
 
     // базовые цвета/формы — как было
@@ -2317,11 +2340,21 @@ private fun ChatBubble(
         targetValue = if (selected) selectedColor else baseColor,
         label = "bubbleBg"
     )
-    val shape = RoundedCornerShape(
-        topStart = 18.dp, topEnd = 18.dp,
-        bottomEnd = if (mine) 4.dp else 18.dp,
-        bottomStart = if (mine) 18.dp else 4.dp
-    )
+    val shape = if (mine) {
+        RoundedCornerShape(
+            topStart = 18.dp,
+            topEnd   = if (isGroupedWithPrev) 10.dp else 18.dp,
+            bottomEnd= 6.dp,
+            bottomStart = 18.dp
+        )
+    } else {
+        RoundedCornerShape(
+            topStart = if (isGroupedWithPrev) 10.dp else 18.dp,
+            topEnd   = 18.dp,
+            bottomEnd= 18.dp,
+            bottomStart = 6.dp
+        )
+    }
 
 // ─── «кружок выбора» всегда прилипает к левому краю ───
     val dotSize = 22.dp
@@ -2343,6 +2376,8 @@ private fun ChatBubble(
     val signedOffset = if (replySwipeRight) swipePx else -swipePx
     val hintAlpha    = (swipePx / triggerPx).coerceIn(0f, 1f)
 
+    val screenW = LocalConfiguration.current.screenWidthDp.dp
+    val maxBubbleW = screenW * 0.78f
     Box(
         Modifier
             .fillMaxWidth()
@@ -2390,6 +2425,10 @@ private fun ChatBubble(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(
+                    top = if (isGroupedWithPrev) 2.dp else 8.dp,
+                    bottom = if (isLast) 2.dp else 8.dp  // ← к низу последнего пузырька только 2dp
+                )
                 .padding(start = leftInset)
                 .offset { IntOffset(signedOffset.roundToInt(), 0) }
                 .then(
@@ -2432,7 +2471,7 @@ private fun ChatBubble(
                     Color(0xFF3DA5F5)
                 ) else null,
                 modifier = Modifier
-                    .widthIn(max = if (mine) 360.dp else 320.dp)
+                    .widthIn(max = maxBubbleW)
                     .combinedClickable(
                         onClick = {
                             // если режим выбора — переключаем чекбокс; иначе обычный тап
@@ -2460,21 +2499,28 @@ private fun ChatBubble(
                         ForwardHeader(name = f.fromName, photo = f.fromPhoto)
                         Spacer(Modifier.height(4.dp))
                     }
-                    message.reply?.let { r ->
-                        ReplyStub(
-                            author = if (r.fromUid == meUid) meName else peerName,
-                            text = r.text,
-                            onClick = { onReplyAnchorClick?.invoke(r.mid) }
-                        )
-                        Spacer(Modifier.height(4.dp))
-                    }
-                    BubbleMeasuredPretty(
-                        text = message.text,
-                        mine = mine,
-                        at = message.at,
-                        seen = message.seen,
-                        highlightRange = highlightRange,
-                        edited = (message.edited == true)
+
+                    ReplyWithBodyClamp(
+                        reply = message.reply?.let { r ->
+                            {
+                                ReplyStub(
+                                    author = if (r.fromUid == meUid) meName else peerName,
+                                    text   = r.text,
+                                    onClick = { onReplyAnchorClick?.invoke(r.mid) }
+                                )
+                            }
+                        },
+                        body = {
+                            BubbleMeasuredPretty(
+                                text = message.text,
+                                mine = mine,
+                                at = message.at,
+                                seen = message.seen,
+                                highlightRange = highlightRange,
+                                edited = (message.edited == true)
+                            )
+                        },
+                        gap = 4.dp
                     )
                 }
             }
@@ -2491,138 +2537,116 @@ private fun BubbleMeasuredPretty(
     highlightRange: IntRange?,
     edited: Boolean
 ) {
-    // всё берём ЗДЕСЬ, в композиции, а в measure-блок только передаём
-    val metaColor      = Color(0x99000000)
-    val bodyTextStyle  = MaterialTheme.typography.bodyLarge
-    val metaTextStyle  = MaterialTheme.typography.labelSmall
-    val measurer       = rememberTextMeasurer()
-    val density        = LocalDensity.current
+    val metaColor = Color(0x99000000)
+    val bodyTextStyle = MaterialTheme.typography.bodyMedium.copy(
+        fontSize = 15.sp, lineHeight = 18.sp, color = Color(0xFF1B1B1B)
+    )
+    val metaTextStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, color = metaColor)
 
-    val padStart = 12.dp
-    val padTop   = 6.dp
-    val padEnd   = 10.dp
-    val padBottomSingle = 8.dp
-    val padBottomMulti  = 6.dp
-    val gapMetaTopMulti = 2.dp
-    val inlineGap       = 6.dp
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+
+    val padStart = 10.dp
+    val padTop = 6.dp
+    val padEnd = 10.dp
+    val padBottom = 6.dp
+    val inlineGap = 6.dp
+    val pushMin = 4.dp
+    val pushMax = 16.dp
 
     @Composable
-    fun MetaStampInside(mod: Modifier = Modifier) {
-        Row(mod, verticalAlignment = Alignment.CenterVertically) {
-            if (edited) {
-                Text("изменено", style = metaTextStyle, color = metaColor)
-                Spacer(Modifier.width(6.dp))
-            }
-            Text(formatHmLocal(at), style = metaTextStyle, color = metaColor)
+    fun MetaStamp() {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (edited) { Text("изменено", style = metaTextStyle); Spacer(Modifier.width(6.dp)) }
+            Text(formatHmLocal(at), style = metaTextStyle)
             if (mine) {
                 Spacer(Modifier.width(6.dp))
-                val icon = if (seen) Icons.Filled.DoneAll else Icons.Filled.Done
-                Icon(icon, null, tint = metaColor, modifier = Modifier.size(14.dp))
+                Icon(if (seen) Icons.Filled.DoneAll else Icons.Filled.Done, null,
+                    tint = metaColor, modifier = Modifier.size(14.dp))
             }
-        }
-    }
-
-    @Composable
-    fun MetaFooterChip() {
-        Surface(color = Color(0x14000000), shape = RoundedCornerShape(8.dp)) {
-            MetaStampInside(Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
         }
     }
 
     SubcomposeLayout { constraints ->
-        // 1) меряем мету (ширина/высота для однострочного случая)
-        val metaPlaceables = subcompose("metaMeasure") { MetaStampInside() }
-            .map { it.measure(Constraints()) }
-        val metaW = metaPlaceables.maxOfOrNull { it.width } ?: 0
-        val metaH = metaPlaceables.maxOfOrNull { it.height } ?: 0
-
-        val padStartPx = with(density) { padStart.toPx() }.toInt()
-        val padEndPx   = with(density) { padEnd.toPx()   }.toInt()
-        val padTopPx   = with(density) { padTop.toPx()   }.toInt()
-        val padBottomSinglePx = with(density) { padBottomSingle.toPx() }.toInt()
-        val padBottomMultiPx  = with(density) { padBottomMulti.toPx()  }.toInt()
-        val gapMetaTopMultiPx = with(density) { gapMetaTopMulti.toPx() }.toInt()
-        val inlineGapPx       = with(density) { inlineGap.toPx()       }.toInt()
-
         val maxW = constraints.maxWidth
 
-        // 2) проверяем: поместится ли текст в 1 строку, если справа оставить место под мету
-        val reservePx = metaW + inlineGapPx
-        val availableForTextPxInline = (maxW - padStartPx - reservePx).coerceAtLeast(1)
+        val padStartPx = with(density) { padStart.toPx()  }.toInt()
+        val padTopPx   = with(density) { padTop.toPx()    }.toInt()
+        val padEndPx   = with(density) { padEnd.toPx()    }.toInt()
+        val padBottomPx= with(density) { padBottom.toPx() }.toInt()
+        val inlineGapPx= with(density) { inlineGap.toPx() }.toInt()
+        val pushMinPx  = with(density) { pushMin.toPx()   }.toInt()
+        val pushMaxPx  = with(density) { pushMax.toPx()   }.toInt()
 
-        val measureInline = measurer.measure(
+        // 1) меряем метку (время/иконки)
+        val metaPl = subcompose("meta") { MetaStamp() }.map { it.measure(Constraints()) }
+        val metaW = metaPl.maxOfOrNull { it.width } ?: 0
+        val metaH = metaPl.maxOfOrNull { it.height } ?: 0
+
+        // 2) меряем текст БЕЗ резерва под мету — чтобы знать фактические границы строк
+        val layout = measurer.measure(
             text = buildHighlighted(text, highlightRange),
             style = bodyTextStyle,
-            constraints = Constraints(maxWidth = availableForTextPxInline)
+            constraints = Constraints(maxWidth = (maxW - padStartPx - padEndPx).coerceAtLeast(1))
         )
-        val isSingleLine = measureInline.lineCount <= 1
+        val last = layout.lineCount - 1
+        val lastRightPx  = layout.getLineRight(last).toInt()      // правая граница ПОСЛЕДНЕЙ строки
+        val lastBottomPx = layout.getLineBottom(last).toInt()
+        val widestPx     = (0 until layout.lineCount).maxOf { layout.getLineRight(it).toInt() }
 
-        if (isSingleLine) {
-            // ───── одна строка: мета в той же строке справа ─────
-            val textPl = subcompose("text1l") {
-                Box(
-                    Modifier.padding(
-                        start = padStart, top = padTop,
-                        end = with(density) { reservePx.toDp() }, bottom = padBottomSingle
-                    )
-                ) {
-                    Text(
-                        text = buildHighlighted(text, highlightRange),
-                        color = Color(0xFF1B1B1B),
-                        style = bodyTextStyle
-                    )
-                }
-            }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+        // реальный текстовый placeable (с паддингами)
+        val textPl = subcompose("text") {
+            Box(Modifier.padding(start = padStart, top = padTop, end = padEnd, bottom = padBottom)) {
+                Text(buildHighlighted(text, highlightRange), style = bodyTextStyle)
+            }
+        }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
 
-            val bodyW = textPl.maxOfOrNull { it.width } ?: 0
-            val bodyH = textPl.maxOfOrNull { it.height } ?: 0
+        val bodyW = textPl.maxOfOrNull { it.width } ?: 0
+        val bodyH = textPl.maxOfOrNull { it.height } ?: 0
 
-            val width  = maxOf(bodyW, padStartPx + reservePx) + padEndPx
-            val height = maxOf(bodyH, padTopPx + metaH + padBottomSinglePx)
+        // пузырь должен вмещать хотя бы метку (если текст короткий)
+        val minForMeta = padStartPx + metaW + padEndPx
+        val naturalW = maxOf(bodyW, minForMeta)
+        val width = naturalW.coerceAtMost(maxW)
 
-            layout(width, height) {
+        // правая позиция метки (всегда от правого края пузыря)
+        val metaX = width - padEndPx - metaW
+
+        // абсолютная правая граница последней строки (слева от пузыря)
+        val lastRightAbs = padStartPx + lastRightPx
+
+        // перекрытие зоны метки последней строкой (с нашим зазором inlineGap)
+        val overlapPx = lastRightAbs + inlineGapPx - metaX
+
+        if (overlapPx <= 0) {
+            // всё влезает «в строку» — держим мету на baseline последней строки
+            val height = maxOf(bodyH, padTopPx + lastBottomPx + padBottomPx)
+            val metaY = padTopPx + lastBottomPx - metaH
+            return@SubcomposeLayout layout(width, height) {
                 textPl.forEach { it.place(0, 0) }
-                val metaX = width - metaW - padEndPx
-                val metaY = height - metaH - (padBottomSinglePx / 2)
-                metaPlaceables.forEach { it.place(metaX, metaY) }
+                metaPl.forEach { it.place(metaX, metaY) }
             }
         } else {
-            // ───── несколько строк: мета как подпись-чип снизу справа ─────
-            val textPl = subcompose("textMl") {
-                Box(
-                    Modifier.padding(
-                        start = padStart, top = padTop,
-                        end = padEnd, bottom = padBottomMulti
-                    )
-                ) {
-                    Text(
-                        text = buildHighlighted(text, highlightRange),
-                        color = Color(0xFF1B1B1B),
-                        style = bodyTextStyle
-                    )
-                }
-            }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+            // тесно — мягко опускаем метку вниз (push-down пропорционально «наскольку тесно»)
+            val k = (overlapPx.toFloat() / (metaW + inlineGapPx).toFloat()).coerceIn(0f, 1f)
+            val pushPx = (pushMinPx + k * (pushMaxPx - pushMinPx)).toInt()
 
-            val footerPl = subcompose("metaFooter") { MetaStampInside() } //MetaFooterChip() еще возможен
-                .map { it.measure(Constraints(maxWidth = maxW - padStartPx - padEndPx)) }
+            val metaY = padTopPx + lastBottomPx - metaH + pushPx
+            val height = maxOf(bodyH, metaY + metaH + padBottomPx)
 
-            val bodyW = textPl.maxOfOrNull { it.width } ?: 0
-            val bodyH = textPl.maxOfOrNull { it.height } ?: 0
-            val footerW = footerPl.maxOfOrNull { it.width } ?: 0
-            val footerH = footerPl.maxOfOrNull { it.height } ?: 0
-
-            val width  = maxOf(bodyW, padStartPx + footerW + padEndPx)
-            val height = bodyH + gapMetaTopMultiPx + footerH
-
-            layout(width, height) {
+            return@SubcomposeLayout layout(width, height) {
                 textPl.forEach { it.place(0, 0) }
-                val fx = width - padEndPx - footerW
-                val fy = bodyH + gapMetaTopMultiPx
-                footerPl.forEach { it.place(fx, fy) }
+                metaPl.forEach { it.place(metaX, metaY) }
             }
         }
     }
 }
+
+
+
+
+
+
 
 
 
@@ -2669,42 +2693,71 @@ private fun ReplyStub(
 ) {
     val clickMod = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
 
-    BoxWithConstraints(
-        modifier = Modifier
-            .padding(start = 8.dp, top = 8.dp, end = 8.dp)
+    Surface(
+        color = Color(0xFFE6F2FF),
+        shape = RoundedCornerShape(8.dp),
+        modifier = clickMod // ← почти на всю ширину пузыря
     ) {
-        // Мамочка делает цитатку намного уже: до 56% ширины или максимум 220dp
-        val targetMax = (maxWidth * 0.56f).coerceAtMost(220.dp)
-
-        Surface(
-            color = Color(0xFFE6F2FF),
-            shape = RoundedCornerShape(8.dp),
-            modifier = clickMod
-                .widthIn(min = 120.dp, max = targetMax) // ← узенько-узенько
-        ) {
-            Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                Box(
-                    Modifier
-                        .width(3.dp)
-                        .heightIn(min = 22.dp)
-                        .background(Color(0xFF3DA5F5))
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            // тонкая полоска слева
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .heightIn(min = 22.dp)
+                    .background(Color(0xFF3DA5F5))
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f, fill = false)) {
+                Text(
+                    author,
+                    color = Color(0xFF1976D2),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f, fill = false)) {
-                    Text(
-                        author,
-                        color = Color(0xFF1976D2),
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    Text(
-                        text,
-                        color = Color(0xFF1B1B1B),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
+                Text(
+                    text,
+                    color = Color(0xFF1B1B1B),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun ReplyWithBodyClamp(
+    reply: (@Composable () -> Unit)?,
+    body: @Composable () -> Unit,
+    gap: Dp = 4.dp
+) {
+    val density = LocalDensity.current
+    SubcomposeLayout { constraints ->
+        // 1) меряем тело — это наш «эталон ширины»
+        val bodyPl = subcompose("body", body).map { it.measure(constraints) }
+        val bodyW  = bodyPl.maxOfOrNull { it.width } ?: 0
+        val bodyH  = bodyPl.sumOf { it.height }
+
+        // 2) меряем цитатку с ограничением maxWidth = bodyW
+        val replyPl = if (reply != null) {
+            subcompose("reply", reply).map {
+                it.measure(constraints.copy(maxWidth = bodyW.coerceAtLeast(0)))
+            }
+        } else emptyList()
+        val replyH = replyPl.sumOf { it.height }
+
+        val gapPx = with(density) { (if (replyPl.isNotEmpty()) gap else 0.dp).toPx().toInt() }
+
+        val width  = bodyW // финальная ширина = ширина тела
+        val height = replyH + gapPx + bodyH
+
+        layout(width, height) {
+            var y = 0
+            replyPl.forEach { it.place(0, y); y += it.height }
+            if (replyPl.isNotEmpty()) y += gapPx
+            bodyPl.forEach { it.place(0, y) }
         }
     }
 }

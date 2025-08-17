@@ -105,4 +105,6 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.2")
 
     implementation("com.google.firebase:firebase-database-ktx:21.0.0")
+
+    implementation("io.github.webrtc-sdk:android:137.7151.01")
 }

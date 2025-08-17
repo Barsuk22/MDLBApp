@@ -9,13 +9,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -49,6 +54,7 @@ import com.app.mdlbapp.rule.CreateRuleScreen
 import com.app.mdlbapp.rule.EditRuleScreen
 import com.app.mdlbapp.rule.RulesListScreen
 import com.app.mdlbapp.rule.RulesScreen
+import com.app.mdlbapp.ui.call.WatchIncomingCall
 import com.app.mdlbapp.ui.chat.BabyChatScreen
 import com.app.mdlbapp.ui.chat.MommyChatScreen
 import com.app.mdlbapp.ui.theme.MDLBAppTheme
@@ -65,6 +71,8 @@ class MainActivity : ComponentActivity() {
         Log.d("TZ", "MainActivity onCreate started")
 
         enableEdgeToEdge()
+
+
 
         setContent {
             MDLBAppTheme {
@@ -407,6 +415,12 @@ class MainActivity : ComponentActivity() {
                             composable("onboarding_mommy") {
                                 MommyOnboardingFlow(navController = navController)
                             }
+
+                            composable("call/{tid}/{asCaller}") { back ->
+                                val tid = back.arguments?.getString("tid")!!
+                                val asCaller = back.arguments?.getString("asCaller") == "1"
+                                com.app.mdlbapp.ui.call.CallScreen(tid = tid, asCaller = asCaller, navBack = { navController.popBackStack() })
+                            }
                         }
                     }
 
@@ -423,6 +437,7 @@ class MainActivity : ComponentActivity() {
                 "isOnline" to true
             ))
     }
+
 
     override fun onPause() {
         super.onPause()
