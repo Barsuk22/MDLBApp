@@ -16,6 +16,10 @@
     import androidx.activity.result.contract.ActivityResultContracts
     import androidx.compose.foundation.layout.Box
     import androidx.compose.foundation.layout.fillMaxSize
+    import androidx.compose.foundation.layout.fillMaxWidth
+    import androidx.compose.foundation.layout.imePadding
+    import androidx.compose.foundation.layout.navigationBarsPadding
+    import androidx.compose.foundation.layout.padding
     import androidx.compose.material3.CircularProgressIndicator
     import androidx.compose.material3.Text
     import androidx.compose.runtime.Composable
@@ -29,6 +33,7 @@
     import androidx.compose.ui.Modifier
     import androidx.compose.ui.platform.LocalContext
     import androidx.compose.ui.res.stringResource
+    import androidx.compose.ui.unit.dp
     import androidx.core.content.ContextCompat
     import androidx.lifecycle.lifecycleScope
     import androidx.navigation.NavHostController
@@ -45,7 +50,10 @@
     import com.app.mdlbapp.authorization.PairCodeScreenBaby
     import com.app.mdlbapp.authorization.PairCodeScreenMommy
     import com.app.mdlbapp.authorization.RoleSelectionScreen
+    import com.app.mdlbapp.data.call.CallPermissionsShortcuts
     import com.app.mdlbapp.data.call.CallRepository
+    import com.app.mdlbapp.data.call.FsSelfCheck
+    import com.app.mdlbapp.data.call.FullscreenIntentPrompt
     import com.app.mdlbapp.data.call.RequestPostNotificationsPermissionOnce
     import com.app.mdlbapp.habits.ui.BabyHabitsScreen
     import com.app.mdlbapp.habits.ui.CreateHabitScreen
@@ -76,8 +84,7 @@
     import kotlinx.coroutines.launch
     import kotlinx.coroutines.tasks.await
 
-    const val CALLS_CH_ID = "calls_incoming_v2"
-
+    const val CALLS_CH_ID = "calls_incoming_v4"
     class MainActivity : ComponentActivity() {
         private fun registerFcmTokenForCurrentUser() {
             val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
@@ -544,6 +551,15 @@
                             }
                         }
                         ExactAlarmPrompt()
+                        FullscreenIntentPrompt(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        )
+
+                        CallPermissionsShortcuts(
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }

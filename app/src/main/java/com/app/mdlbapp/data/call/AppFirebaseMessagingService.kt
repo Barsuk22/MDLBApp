@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -61,14 +62,15 @@ class AppFirebaseMessagingService : FirebaseMessagingService() {
         }
         if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return
 
-        val intent = Intent(this, MainActivity::class.java).apply {
+        val intent = Intent(this, com.app.mdlbapp.ui.call.IncomingCallActivity::class.java).apply {
             putExtra("openCall", true)
             putExtra("callerUid", callerUid)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
+        val reqCode = (SystemClock.uptimeMillis() and 0x7FFFFFFF).toInt()
         val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            this, reqCode, intent,
+            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val notif = NotificationCompat.Builder(this, CALLS_CH_ID)   // 👈 единый канал!
@@ -80,6 +82,8 @@ class AppFirebaseMessagingService : FirebaseMessagingService() {
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setFullScreenIntent(pendingIntent, true)
             .setOngoing(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
 
         NotificationManagerCompat.from(this).notify(1001, notif)

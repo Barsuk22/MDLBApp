@@ -78,6 +78,14 @@
             </intent-filter>
         </receiver>
 
+        <activity
+            android:name=".ui.call.IncomingCallActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true" />
+
         <!-- Будильник на момент дедлайна привычки -->
         <receiver
             android:name=".habits.background.receivers.HabitDeadlineReceiver"

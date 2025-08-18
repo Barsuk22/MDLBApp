@@ -1,10 +1,28 @@
 package com.app.mdlbapp.data.call
 
 import android.Manifest
+import android.R.attr.data
 import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
+import android.view.Surface
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontVariation.Settings
+import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -20,14 +38,15 @@ class IncomingCallService : Service() {
 
         ensureCallChannel()
 
-        val tap = Intent(this, MainActivity::class.java).apply {
+        val tap = Intent(this, com.app.mdlbapp.ui.call.IncomingCallActivity::class.java).apply {
             putExtra("openCall", true)
             putExtra("callerUid", fromUid)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
+        val reqCode = (SystemClock.uptimeMillis() and 0x7FFFFFFF).toInt()
         val pi = PendingIntent.getActivity(
-            this, 0, tap,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            this, reqCode, tap,
+            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val notif = NotificationCompat.Builder(this, CALLS_CH_ID)
@@ -38,6 +57,8 @@ class IncomingCallService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setFullScreenIntent(pi, true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setOngoing(true)
             .build()
 
@@ -67,7 +88,7 @@ class IncomingCallService : Service() {
             }
 
             // фолбэк: покажем хотя бы уведомление
-            NotificationManagerCompat.from(this).notify(421, notif)
+            NotificationManagerCompat.from(this).notify(42, notif) // обновили то же самое уведомление
             stopSelf()
             return START_NOT_STICKY
         }
