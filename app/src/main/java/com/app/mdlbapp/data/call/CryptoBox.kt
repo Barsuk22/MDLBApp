@@ -3,9 +3,11 @@ package com.app.mdlbapp.data.call
 object CryptoBox {
     private fun b64d(s: String) =
         android.util.Base64.decode(s, android.util.Base64.DEFAULT)
+
     private fun b64e(b: ByteArray) =
         android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP)
-    private fun newIv() = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
+
+    private fun newIv() = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) } // 96-bit IV
 
     fun encryptMap(keyB64: String, map: Map<String, Any?>): String {
         val json = org.json.JSONObject(map).toString().toByteArray(Charsets.UTF_8)

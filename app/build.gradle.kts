@@ -107,4 +107,8 @@ dependencies {
     implementation("com.google.firebase:firebase-database-ktx:21.0.0")
 
     implementation("io.github.webrtc-sdk:android:137.7151.01")
+
+    implementation("com.google.firebase:firebase-messaging-ktx:24.0.0")
+
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

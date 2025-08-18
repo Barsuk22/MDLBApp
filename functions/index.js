@@ -1,7 +1,12 @@
-const functions = require('firebase-functions');
-const admin     = require('firebase-admin');
+const functions   = require('firebase-functions');
+const admin       = require('firebase-admin');
 admin.initializeApp();
 const db = admin.firestore();
+
+const { onRequest }   = require('firebase-functions/v2/https');
+const { defineString }= require('firebase-functions/params');
+
+const JOBS_SECRET = defineString('sGZsS0TGKkM8VStZKOtZCjk1wK0Cj6k/fNhX2/fL8M0=');
 
 /** Добавляем N дней к дате (UTC) */
 function addDays(date, n) {
@@ -83,11 +88,10 @@ function shouldResetStreak(habit, todayDate) {
  * HTTP-функция, которая обновляет привычки всех Мамочек.
  * Вызывается внешним кроном (GitHub Actions).
  */
-exports.updateHabits = functions.https.onRequest(async (req, res) => {
-  // 1) Простейшая авторизация
+
+exports.updateHabits = onRequest(async (req, res) => {
   const secret = req.query.secret;
-  const cfg    = functions.config().jobs || {};
-  if (!secret || secret !== cfg.secret) {
+  if (!secret || secret !== JOBS_SECRET.value()) {
     return res.status(403).send('Forbidden');
   }
 
@@ -130,3 +134,42 @@ exports.updateHabits = functions.https.onRequest(async (req, res) => {
   await batch.commit();
   return res.send('OK');
 });
+
+/** Пуш при создании звонка: шлём data-пакет "type=call" получателю */
+exports.notifyOnCallCreate = functions.firestore
+  .document('chats/{tid}/calls/{cid}')
+  .onCreate(async (snap) => {
+    const call = snap.data();
+    if (!call || call.state !== 'ringing') return null;
+
+    const { calleeUid, callerUid } = call;
+
+    const callerDoc  = await db.collection('users').doc(callerUid).get();
+    const callerName = callerDoc.get('displayName') || 'Мамочка';
+
+    const userDoc = await db.collection('users').doc(calleeUid).get();
+    const tokens  = userDoc.get('fcmTokens') || [];
+    if (!tokens.length) return null;
+
+    const message = {
+      tokens,
+      data: { type: 'call', fromUid: callerUid, fromName: callerName },
+      android: { priority: 'HIGH', ttl: '0s' } // немедленно
+    };
+
+    const resp = await admin.messaging().sendEachForMulticast(message);
+
+    // чистим тухлые токены (как у тебя)
+    const bad = [];
+    resp.responses.forEach((r,i) => {
+      if (!r.success) {
+        const err = String(r.error?.code || '');
+        if (err.includes('registration-token-not-registered')) bad.push(tokens[i]);
+      }
+    });
+    if (bad.length) {
+      await db.collection('users').doc(calleeUid)
+        .update({ fcmTokens: admin.firestore.FieldValue.arrayRemove(...bad) });
+    }
+    return null;
+  });

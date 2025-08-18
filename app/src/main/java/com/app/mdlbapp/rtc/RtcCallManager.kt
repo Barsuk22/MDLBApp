@@ -5,11 +5,15 @@ import android.content.Context
 import android.content.Context.AUDIO_SERVICE
 import android.media.AudioManager
 import com.app.mdlbapp.data.call.CallRepository
+import com.app.mdlbapp.data.call.CallRepository.getOrCreateRtcKeyB64
 import com.app.mdlbapp.data.call.IceBlob
 import com.app.mdlbapp.data.call.SdpBlob
+import com.app.mdlbapp.data.call.notifyCallViaAppsScript
+import com.google.firebase.firestore.ktx.firestore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import org.webrtc.*
 import kotlin.getValue
 
@@ -89,8 +93,11 @@ class RtcCallManager(
             override fun onIceCandidate(c: IceCandidate) {
                 currentCallId?.let { cid ->
                     scope.launch {
-                        CallRepository.addIce(
-                            tid, cid, IceBlob(meUid, c.sdpMid ?: "", c.sdpMLineIndex, c.sdp)
+                        ensureRtcKey()
+                        CallRepository.addIceEncrypted(
+                            tid, cid,
+                            IceBlob(meUid, c.sdpMid ?: "", c.sdpMLineIndex, c.sdp),
+                            rtcKeyB64!! // <—
                         )
                     }
                 }
@@ -144,23 +151,48 @@ class RtcCallManager(
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", sendVideo.toString()))
         }
+
         pc.createOffer(object : SdpObserver by sdpStub() {
             override fun onCreateSuccess(desc: SessionDescription) {
                 pc.setLocalDescription(sdpStub(), desc)
-                scope.launch {
-                    runCatching {
-                    val cid = CallRepository.createOutgoingCall(
-                        tid, meUid, peerUid, SdpBlob(desc.type.canonical(), desc.description)
-                    )
-                    currentCallId = cid
-                    onCreated(cid)
-                    listenRemoteIce(cid)
-                }.onFailure { e ->
-                        android.widget.Toast
-                            .makeText(ctx, "Не смогла создать звонок: ${e.message}", android.widget.Toast.LENGTH_LONG)
-                            .show()
+                pc.createOffer(object : SdpObserver by sdpStub() {
+                    override fun onCreateSuccess(desc: SessionDescription) {
+                        pc.setLocalDescription(sdpStub(), desc)
+                        scope.launch {
+                            runCatching {
+                                ensureRtcKey()
+                                val cid = CallRepository.createOutgoingCallEncrypted(
+                                    tid, meUid, peerUid,
+                                    SdpBlob(desc.type.canonical(), desc.description),
+                                    rtcKeyB64!! // <— КЛЮЧ
+                                )
+                                currentCallId = cid
+                                onCreated(cid)
+
+                                // найдём имя звонящего (как видит собеседник)
+                                val callerName = runCatching {
+                                    val meDoc = com.google.firebase.ktx.Firebase.firestore
+                                        .collection("users").document(meUid).get().await()
+                                    meDoc.getString("displayName") ?: "Мамочка"
+                                }.getOrElse { "Мамочка" }
+
+                                // пушим Apps Script, чтобы прилетел FCM "type=call"
+                                notifyCallViaAppsScript(
+                                    webHookUrl = com.app.mdlbapp.data.call.PushConfig.WEBHOOK_URL,
+                                    calleeUid  = peerUid,
+                                    callerUid  = meUid,
+                                    callerName = callerName,
+                                    hookSecret = com.app.mdlbapp.data.call.PushConfig.WEBHOOK_SECRET.ifBlank { null }
+                                )
+
+                                listenRemoteIce(cid) // оставим, но он у нас сейчас тоже расшифровывает (см. ниже)
+                            }.onFailure { e ->
+                                android.util.Log.e("CALL", "webhook failed", e)
+                                android.widget.Toast.makeText(ctx, "Не смогла создать звонок: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }
-                    }
+                }, mc)
             }
         }, mc)
     }
@@ -181,7 +213,12 @@ class RtcCallManager(
                                 // …и только затем отправляем в Firestore
                                 scope.launch {
                                     runCatching {
-                                        CallRepository.setAnswer(tid, callId, SdpBlob(desc.type.canonical(), desc.description))
+                                        ensureRtcKey()
+                                        CallRepository.setAnswerEncrypted(
+                                            tid, callId,
+                                            SdpBlob(desc.type.canonical(), desc.description),
+                                            rtcKeyB64!! // <—
+                                        )
                                         CallRepository.setState(tid, callId, "connected")
                                     }.onFailure { e ->
                                         android.widget.Toast.makeText(
@@ -232,9 +269,20 @@ class RtcCallManager(
 
     private fun listenRemoteIce(callId: String) {
         scope.launch {
-            CallRepository.watchIce(tid, callId).collect { ice ->
-                if (ice.fromUid != meUid) pc.addIceCandidate(IceCandidate(ice.sdpMid, ice.sdpMLineIndex, ice.candidate))
+            ensureRtcKey()
+            CallRepository.watchIceDecrypted(tid, callId, rtcKeyB64!!).collect { ice ->
+                if (ice.fromUid != meUid) {
+                    pc.addIceCandidate(IceCandidate(ice.sdpMid, ice.sdpMLineIndex, ice.candidate))
+                }
             }
+        }
+    }
+
+    private var rtcKeyB64: String? = null
+
+    private suspend fun ensureRtcKey() {
+        if (rtcKeyB64 == null) {
+            rtcKeyB64 = getOrCreateRtcKeyB64(tid, meUid, peerUid)
         }
     }
 

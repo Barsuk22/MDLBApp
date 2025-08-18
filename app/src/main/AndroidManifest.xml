@@ -13,8 +13,17 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <uses-feature android:name="android.hardware.camera.any" android:required="false"/>
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
+
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS"/>
 
     <application
         android:allowBackup="true"
@@ -77,6 +86,19 @@
         <receiver
             android:name=".habits.background.workers.MidnightReceiver"
             android:exported="false" />
+
+        <service
+            android:name=".data.call.AppFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT"/>
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".data.call.IncomingCallService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall" />
     </application>
 
 </manifest>

@@ -3,6 +3,7 @@
 package com.app.mdlbapp.ui.call
 
 import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,6 +26,8 @@ import kotlinx.coroutines.tasks.await
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
+import com.app.mdlbapp.data.call.CallRepository.getOrCreateRtcKeyB64
+import java.util.jar.Manifest
 
 @Composable
 fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
@@ -32,6 +35,10 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val me    = FirebaseAuth.getInstance().currentUser?.uid ?: return
 
+
+
+
+    var rtcKeyB64 by remember { mutableStateOf<String?>(null) }
     // 1) узнаём собеседника
     var peerUid by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(tid) {
@@ -53,6 +60,12 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
                 .getOrNull()
         }
     }
+    LaunchedEffect(peerUid) {
+        val p = peerUid ?: return@LaunchedEffect
+        val me = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+        rtcKeyB64 = getOrCreateRtcKeyB64(tid, me, p)
+    }
+
     if (rtc == null) { Text("Готовим звонок…"); return }
 
     var callId  by remember { mutableStateOf<String?>(null) }
@@ -75,15 +88,26 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
 
     // Разрешения
     EnsureCallPermissions(
-        onGranted = { permsOk = true; rtc!!.startLocalVideo() },
-        onDenied  = { Toast.makeText(ctx, "Нужны камера и микрофон", Toast.LENGTH_SHORT).show(); navBack() }
+        onGranted = { permsOk = true }, // ничего не трогаем rtc тут!
+        onDenied  = {
+            Toast.makeText(ctx, "Нужны камера и микрофон", Toast.LENGTH_SHORT).show()
+            navBack()
+        }
     )
+
+    LaunchedEffect(permsOk, rtc) {
+        if (permsOk && rtc != null) {
+            runCatching { rtc!!.startLocalVideo() }.onFailure { e ->
+                Toast.makeText(ctx, "Камера не стартанула: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     // Входящий: ждём "ringing" и сам документ звонка
     val ttlMs = 120_000L
 
-    DisposableEffect(permsOk, asCaller, peerUid) {
-        if (!permsOk || peerUid == null || asCaller) onDispose { }
+    DisposableEffect(permsOk, asCaller, peerUid, rtcKeyB64) {
+        if (!permsOk || peerUid == null || asCaller || rtcKeyB64 == null) onDispose { }
         else {
             val reg = Firebase.firestore.collection("chats").document(tid)
                 .collection("calls")
@@ -94,7 +118,6 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
                     val docs = qs?.documents.orEmpty()
                     if (docs.isEmpty()) return@addSnapshotListener
 
-                    // берём самый свежий по createdAt
                     val fresh = docs.maxByOrNull { it.getTimestamp("createdAt")?.toDate()?.time ?: 0L }!!
                     val created = fresh.getTimestamp("createdAt")?.toDate()?.time ?: 0L
                     if (created == 0L || System.currentTimeMillis() - created > ttlMs) {
@@ -104,22 +127,16 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
 
                     if (callId == null) {
                         callId = fresh.id
-                        callDoc = fresh.toObject(CallDoc::class.java)
+                        // ⚠️ не берём сырое fresh.toObject(...) — ждём расшифровку
                         scope.launch {
-                            CallRepository.watchCall(tid, fresh.id).collect { c ->
-                                callDoc = c
-                                // если answer появился, а state ещё не "connected" — переключим
-                                if (c?.answer != null && c.state != "connected") {
-                                    runCatching {
-                                        CallRepository.setState(
-                                            tid,
-                                            fresh.id,
-                                            "connected"
-                                        )
+                            CallRepository.watchCallDecrypted(tid, fresh.id, rtcKeyB64!!)
+                                .collect { c ->
+                                    callDoc = c
+                                    if (c?.answer != null && c.state != "connected") {
+                                        runCatching { CallRepository.setState(tid, fresh.id, "connected") }
                                     }
+                                    if (c?.state == "ended") reallyHangup()
                                 }
-                                if (c?.state == "ended") reallyHangup()
-                            }
                         }
                     }
                 }
@@ -152,7 +169,8 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
             callDoc?.answer?.let { ans -> rtc!!.setRemoteAnswer(ans) }
             // и всё равно слушаем любые изменения
             scope.launch {
-                CallRepository.watchCall(tid, existing.id).collect { c ->
+                val key = rtcKeyB64 ?: return@launch
+                CallRepository.watchCallDecrypted(tid, existing.id, key).collect { c ->
                     callDoc = c
                     c?.answer?.let { ans ->
                         rtc!!.setRemoteAnswer(ans)
@@ -166,7 +184,8 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
             rtc!!.makeOffer(sendVideo = true) { cid ->
                 callId = cid
                 scope.launch {
-                    CallRepository.watchCall(tid, cid).collect { c ->
+                    val key = rtcKeyB64 ?: return@launch
+                    CallRepository.watchCallDecrypted(tid, cid, key).collect { c ->
                         callDoc = c
                         c?.answer?.let { ans ->
                             rtc!!.setRemoteAnswer(ans)
@@ -349,7 +368,8 @@ fun WatchIncomingCall(navController: NavHostController) {
                     return@addSnapshotListener
                 }
                 // если уже есть answer — не тащим экран
-                if ((fresh.get("answer") as? Map<*, *>) != null) return@addSnapshotListener
+                if (fresh.getString("answerEnc") != null || (fresh.get("answer") as? Map<*, *>) != null)
+                    return@addSnapshotListener
 
                 val isCallScreen = navController.currentBackStackEntry
                     ?.destination?.route?.startsWith("call") == true
