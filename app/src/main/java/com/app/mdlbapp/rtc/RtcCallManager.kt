@@ -126,9 +126,6 @@ class RtcCallManager(
             override fun onStandardizedIceConnectionChange(state: PeerConnection.IceConnectionState) {}
 
             // — показываем мамочку в удалённом окне —
-            private val _remoteHasVideo = kotlinx.coroutines.flow.MutableStateFlow(false)
-            val remoteHasVideo: kotlinx.coroutines.flow.StateFlow<Boolean> get() = _remoteHasVideo
-
             override fun onTrack(t: RtpTransceiver) {
                 android.util.Log.d("CALL","onTrack: ${t.receiver.track()?.kind()}")
                 (t.receiver.track() as? VideoTrack)?.let { vt ->

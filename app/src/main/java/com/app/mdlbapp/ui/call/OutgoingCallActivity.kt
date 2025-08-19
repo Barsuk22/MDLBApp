@@ -192,6 +192,7 @@ class OutgoingCallActivity : ComponentActivity() {
                     }
 
                     // UI — как у входящего, только фазы другие и кнопочки всегда снизу
+                    val showVideoLayer = rtc != null && !showCamPreview && phase >= OutPhase.ExchangingKeys
                     OutgoingCallScreen(
                         name = name,
                         avatarUrl = avatar,
@@ -211,7 +212,8 @@ class OutgoingCallActivity : ComponentActivity() {
                         },
                         onToggleSpk = { spkOn = !spkOn },
                         onHangup = { hangup() },
-                        showControls = !showCamPreview
+                        showControls = !showCamPreview,
+                        drawBg = !showVideoLayer
                     )
                     // Фуллскрин-предпросмотр без отступов и с автопритушенными системными барами
                     if (showCamPreview) {
@@ -315,7 +317,8 @@ private fun OutgoingCallScreen(
     onToggleMic: () -> Unit,
     onToggleCam: () -> Unit,
     onToggleSpk: () -> Unit,
-    onHangup: () -> Unit
+    onHangup: () -> Unit,
+    drawBg: Boolean
 ) {
     val bgDisconnected = androidx.compose.ui.graphics.Brush.verticalGradient(
         listOf(Color(0xFF18122B), Color(0xFF33294D), Color(0xFF4C3F78))
@@ -326,7 +329,9 @@ private fun OutgoingCallScreen(
     val bg = if (phase == OutPhase.Connected) bgConnected else bgDisconnected
 
     Surface(color = Color.Transparent) {
-        Box(Modifier.fillMaxSize().background(bg)) {
+        val base = Modifier.fillMaxSize()
+        val layered = if (drawBg) base.background(bg) else base
+        Box(layered) {
 
             Column(
                 Modifier.align(Alignment.TopCenter).padding(top = 48.dp, start = 24.dp, end = 24.dp),

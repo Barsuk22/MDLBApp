@@ -260,6 +260,7 @@ class IncomingCallActivity : ComponentActivity() {
                         }
                     },
                     onToggleSpk = { spkOn = !spkOn },
+                    drawBg = !(rtc != null && !showCamPreview && phase >= CallPhase.Connecting),
                     onAccept = acceptCall,
                     onDecline = {
                         val act = this@IncomingCallActivity
@@ -288,35 +289,72 @@ class IncomingCallActivity : ComponentActivity() {
                     }
                 )
                 val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-                if (showCamPreview) {
-                    rtc?.let { r ->
-                        ModalBottomSheet(
-                            onDismissRequest = { showCamPreview = false },
-                            sheetState = sheetState
-                        ) {
-                            Column(
-                                Modifier.fillMaxWidth().padding(16.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
+                Box(Modifier.fillMaxSize()) {
+                    val showVideoLayer =
+                        rtc != null && !showCamPreview && phase >= CallPhase.Connecting
+
+                    // 1) Видеослой
+                    if (showVideoLayer) {
+                        rtc?.let { r ->
+                            CallSurfaces(
+                                rtc = r,
+                                selfVisible = sendVideo,         // покажем своё окошко, если реально шлём
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+
+                    // 2) Интерфейс (фон выключаем, если есть видео)
+                    IncomingCallScreen(
+                        name = name,
+                        avatarUrl = avatar,
+                        phase = phase,
+                        durationText = durationText,
+                        micOn = micOn, camOn = camOn, spkOn = spkOn,
+                        onToggleMic = { micOn = !micOn },
+                        onToggleCam = {
+                            if (sendVideo) {
+                                rtc?.setVideoSending(false); sendVideo = false; camOn = false
+                            } else {
+                                if (rtc != null) showCamPreview =
+                                    true else toast("Пока нельзя — идёт соединение")
+                            }
+                        },
+                        onToggleSpk = { spkOn = !spkOn },
+                        onAccept = acceptCall,
+                        onDecline = { /* как у тебя */ },
+                        drawBg = !showVideoLayer                       // 👈 важненько
+                    )
+
+                    // 3) Лист предпросмотра
+                    if (showCamPreview) {
+                        rtc?.let { r ->
+                            ModalBottomSheet(
+                                onDismissRequest = { showCamPreview = false },
+                                sheetState = sheetState
                             ) {
-                                Text("Предпросмотр камеры", style = MaterialTheme.typography.titleMedium)
-                                Spacer(Modifier.height(12.dp))
-
-                                AndroidView(
-                                    factory = { r.localPreviewView }, // <— используем r, а не rtc
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(240.dp)
-                                )
-
-                                Spacer(Modifier.height(12.dp))
-                                Button(
-                                    onClick = {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        "Предпросмотр камеры",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                    AndroidView(
+                                        factory = { r.localPreviewView },
+                                        modifier = Modifier.fillMaxWidth().height(240.dp)
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                    Button(onClick = {
                                         camOn = true
-                                        r.setVideoSending(true)   // <— включаем отправку на r
+                                        r.setVideoSending(true) // начинаем ОТПРАВКУ
+                                        sendVideo = true        // 👈 не забыть обновить стейт
                                         showCamPreview = false
-                                    }
-                                ) { Text("Включить трансляцию") }
-                                Spacer(Modifier.height(12.dp))
+                                    }) { Text("Включить трансляцию") }
+                                    Spacer(Modifier.height(12.dp))
+                                }
                             }
                         }
                     }
@@ -400,6 +438,7 @@ private fun IncomingCallScreen(
     onToggleSpk: () -> Unit,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
+    drawBg: Boolean
 ) {
     val bgDisconnected = Brush.verticalGradient(
         listOf(Color(0xFF18122B), Color(0xFF33294D), Color(0xFF4C3F78))
