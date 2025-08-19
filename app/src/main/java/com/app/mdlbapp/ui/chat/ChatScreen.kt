@@ -7,6 +7,7 @@ package com.app.mdlbapp.ui.chat
 
 // ——— imports (собраны без дублей и отсортированы по пакетам) ———
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.widget.Toast
@@ -134,6 +135,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import kotlin.math.max
+import android.provider.Settings
 
 // ——— моделька поиска ———
 data class Hit(val msgIndex: Int, val range: IntRange)
@@ -933,7 +935,18 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                     },
                     actions = {
                         val ctx = androidx.compose.ui.platform.LocalContext.current
-                        IconButton(onClick = { nav.navigate("call/${chatId}/1") }) {
+
+                        IconButton(onClick = {
+                            val ok = com.app.mdlbapp.data.call.MissingChecks.build(ctx).allOk
+                            if (!ok) {
+                                ctx.startActivity(
+                                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                        .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                            nav.navigate("call/${chatId}/1")
+                        }) {
                             Icon(Icons.Filled.Call, contentDescription = "Звонок")
                         }
 

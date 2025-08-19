@@ -5,6 +5,8 @@
     import android.app.NotificationManager
     import android.content.Intent
     import android.content.pm.PackageManager
+    import android.media.AudioAttributes
+    import android.media.RingtoneManager
     import android.os.Build
     import android.os.Bundle
     import android.util.Log
@@ -50,11 +52,12 @@
     import com.app.mdlbapp.authorization.PairCodeScreenBaby
     import com.app.mdlbapp.authorization.PairCodeScreenMommy
     import com.app.mdlbapp.authorization.RoleSelectionScreen
+    import com.app.mdlbapp.data.call.AutoCallReadinessWindows
     import com.app.mdlbapp.data.call.CallPermissionsShortcuts
     import com.app.mdlbapp.data.call.CallRepository
+    import com.app.mdlbapp.data.call.DeviceSetupFlow
     import com.app.mdlbapp.data.call.FsSelfCheck
     import com.app.mdlbapp.data.call.FullscreenIntentPrompt
-    import com.app.mdlbapp.data.call.RequestPostNotificationsPermissionOnce
     import com.app.mdlbapp.habits.ui.BabyHabitsScreen
     import com.app.mdlbapp.habits.ui.CreateHabitScreen
     import com.app.mdlbapp.habits.ui.EditHabitScreen
@@ -121,6 +124,8 @@
             }
 
             FirebaseApp.initializeApp(this)
+
+            ensureCallChannel()
 
             // 1) Слушатель, чтобы всегда сохранять токен после логина
             auth.addAuthStateListener(authListener)
@@ -357,8 +362,6 @@
                             }
                         }
 
-                        RequestPostNotificationsPermissionOnce()
-
                         // Показ навигации (пока "loading" — крутилка)
                         if (startDestination.value == "loading") {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -536,6 +539,31 @@
                                     val asCaller = back.arguments?.getString("asCaller") == "1"
                                     com.app.mdlbapp.ui.call.CallScreen(tid = tid, asCaller = asCaller, navBack = { navController.popBackStack() })
                                 }
+//                                composable("device_setup") {
+//                                    DeviceSetupFlow(navController) {
+//                                        val uid = FirebaseAuth.getInstance().currentUser?.uid
+//                                        if (uid == null) {
+//                                            navController.navigate(Screen.RoleSelection.route) {
+//                                                popUpTo("device_setup") { inclusive = true }
+//                                            }
+//                                        } else {
+//                                            Firebase.firestore.collection("users").document(uid).get()
+//                                                .addOnSuccessListener { doc ->
+//                                                    val role = doc.getString("role") ?: "Baby"
+//                                                    navController.navigate(
+//                                                        if (role == "Mommy") Screen.Mommy.route else Screen.Baby.route
+//                                                    ) {
+//                                                        popUpTo("device_setup") { inclusive = true }
+//                                                    }
+//                                                }
+//                                                .addOnFailureListener {
+//                                                    navController.navigate(Screen.Baby.route) {
+//                                                        popUpTo("device_setup") { inclusive = true }
+//                                                    }
+//                                                }
+//                                        }
+//                                    }
+//                                }
                             }
                             var showWatcher by remember { mutableStateOf(false) }
                             LaunchedEffect(Unit) {
@@ -551,17 +579,40 @@
                             }
                         }
                         ExactAlarmPrompt()
-                        FullscreenIntentPrompt(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 12.dp)
-                        )
+//                        FullscreenIntentPrompt(
+//                            modifier = Modifier
+//                                .fillMaxWidth()
+//                                .padding(horizontal = 16.dp, vertical = 12.dp)
+//                        )
 
-                        CallPermissionsShortcuts(
-                            modifier = Modifier.fillMaxWidth()
-                        )
+//                        CallPermissionsShortcuts(
+//                            modifier = Modifier.fillMaxWidth()
+//                        )
+                        AutoCallReadinessWindows()
                     }
                 }
+            }
+        }
+
+        private fun ensureCallChannel() {
+            if (Build.VERSION.SDK_INT < 26) return
+            val nm = getSystemService(NotificationManager::class.java)
+            if (nm.getNotificationChannel(CALLS_CH_ID) == null) {
+                val ch = NotificationChannel(
+                    CALLS_CH_ID, "Входящие звонки",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Показывает входящие видео/аудио-звонки"
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                    setShowBadge(false)
+                    // опционально — звонок и вибрация по умолчанию:
+                    setSound(
+                        RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                         AudioAttributes.Builder()
+                             .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
+                    enableVibration(true)
+                }
+                nm.createNotificationChannel(ch)
             }
         }
 
@@ -605,5 +656,6 @@
         val paired = doc.getString("pairedWith") ?: return null
         return if (role == "Mommy") uid to paired else paired to uid
     }
+
 
 

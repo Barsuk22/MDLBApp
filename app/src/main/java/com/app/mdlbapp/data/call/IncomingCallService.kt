@@ -41,6 +41,8 @@ class IncomingCallService : Service() {
         val tap = Intent(this, com.app.mdlbapp.ui.call.IncomingCallActivity::class.java).apply {
             putExtra("openCall", true)
             putExtra("callerUid", fromUid)
+            putExtra("fromName", fromName)
+            // putExtra("fromAvatar", fromAvatarUrl) // если знаешь
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         val reqCode = (SystemClock.uptimeMillis() and 0x7FFFFFFF).toInt()

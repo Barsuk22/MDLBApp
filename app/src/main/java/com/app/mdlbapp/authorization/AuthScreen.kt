@@ -690,6 +690,9 @@ fun checkPairingAndNavigate(
                 navController.navigate(if (role == "Mommy") Screen.Mommy.route else Screen.Baby.route)
             }
         }
+
+    fun deviceSetupDone(ctx: Context) =
+        ctx.getSharedPreferences("device_setup", Context.MODE_PRIVATE).getBoolean("done", false)
 }
 
 fun saveUserToFirestore(uid: String, role: String) {

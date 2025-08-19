@@ -27,6 +27,7 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import com.app.mdlbapp.data.call.CallRepository.getOrCreateRtcKeyB64
+import com.app.mdlbapp.data.call.rememberCallReadinessLauncher
 import java.util.jar.Manifest
 
 @Composable
@@ -231,6 +232,11 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
         }
     }
 
+    val launchReadinessToAccept = rememberCallReadinessLauncher {
+        // что делать, когда всё включено:
+        accept()
+    }
+
     LaunchedEffect(callDoc?.answer, callDoc?.state) {
         if (callDoc?.answer != null || callDoc?.state == "connected") accepting = false
     }
@@ -251,7 +257,7 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
                 if (!asCaller && callDoc?.answer == null) {
                     Button(
                         enabled = permsOk && !accepting && callId != null && callDoc?.offer != null,
-                        onClick = { accept() }
+                        onClick = launchReadinessToAccept
                     ) { Text(if (accepting) "Подключаем…" else "Ответить") }
                     OutlinedButton(onClick = { reallyHangup() }) { Text("Отклонить") }
                 }

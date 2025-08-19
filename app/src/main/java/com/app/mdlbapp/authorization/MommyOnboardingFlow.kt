@@ -49,7 +49,6 @@ fun MommyOnboardingFlow(navController: NavHostController) {
     var displayName by remember { mutableStateOf("") }
     var theme by remember { mutableStateOf("soft") }
     var localAvatar by remember { mutableStateOf<Uri?>(null) }
-    var photoUrl by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
     val pickImage = rememberLauncherForActivityResult(
