@@ -83,7 +83,6 @@
         <activity
             android:name=".ui.call.IncomingCallActivity"
             android:exported="true"
-            android:excludeFromRecents="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:launchMode="singleTask"
@@ -96,6 +95,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ui.call.OutgoingCallActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.MDLBApp.NoActionBar" />
 
         <!-- Будильник на момент дедлайна привычки -->
         <receiver

@@ -937,15 +937,22 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                         val ctx = androidx.compose.ui.platform.LocalContext.current
 
                         IconButton(onClick = {
-                            val ok = com.app.mdlbapp.data.call.MissingChecks.build(ctx).allOk
-                            if (!ok) {
-                                ctx.startActivity(
-                                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                                        .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                )
-                            }
-                            nav.navigate("call/${chatId}/1")
+                            val me  = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+                            val peerUid = if (me == mommyUid) babyUid else mommyUid
+
+                            ctx.startActivity(
+                                android.content.Intent(ctx, com.app.mdlbapp.ui.call.OutgoingCallActivity::class.java).apply {
+                                    putExtra("tid", "${mommyUid}_${babyUid}")
+                                    putExtra("peerUid", peerUid)
+                                    putExtra("peerName", peerName)
+                                    putExtra("peerAvatar", peerPhoto)
+                                    addFlags(
+                                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                                android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                                    )
+                                }
+                            )
                         }) {
                             Icon(Icons.Filled.Call, contentDescription = "Звонок")
                         }

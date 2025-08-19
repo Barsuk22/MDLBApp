@@ -62,51 +62,84 @@ class AppFirebaseMessagingService : FirebaseMessagingService() {
         }
         if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return
 
-        val intent = Intent(this, com.app.mdlbapp.ui.call.IncomingCallActivity::class.java).apply {
-            putExtra("openCall", true)
-            putExtra("callerUid", callerUid)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        val reqCode = (SystemClock.uptimeMillis() and 0x7FFFFFFF).toInt()
-        val pendingIntent = PendingIntent.getActivity(
-            this, reqCode, intent,
-            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notif = NotificationCompat.Builder(this, CALLS_CH_ID)   // 👈 единый канал!
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Входящий звонок")
-            .setContentText("$callerName звонит тебе 📞")
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setFullScreenIntent(pendingIntent, true)
-            .setOngoing(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        val person = androidx.core.app.Person.Builder()
+            .setName(callerName)
             .build()
 
-        NotificationManagerCompat.from(this).notify(1001, notif)
+        val fullScreen = PendingIntent.getActivity(
+            this, 300,
+            Intent(this, com.app.mdlbapp.ui.call.IncomingCallActivity::class.java).apply {
+                putExtra("openCall", true)
+                putExtra("callerUid", callerUid)
+                putExtra("fromName", callerName)
+                putExtra("autoAccept", false) // <-- только показать
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val acceptAct = PendingIntent.getActivity(
+            this, 301,
+            Intent(this, com.app.mdlbapp.ui.call.IncomingCallActivity::class.java).apply {
+                putExtra("openCall", true)
+                putExtra("callerUid", callerUid)
+                putExtra("fromName", callerName)
+                putExtra("autoAccept", true) // <-- тут принимаем
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val declineSvc = PendingIntent.getService(
+            this, 302,
+            Intent(this, com.app.mdlbapp.data.call.IncomingCallService::class.java).apply {
+                action = "com.app.mdlbapp.ACTION_DECLINE"
+                putExtra("fromUid", callerUid)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(this, CALLS_CH_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+            .setStyle(
+                NotificationCompat.CallStyle.forIncomingCall(person, declineSvc, acceptAct)
+                    .setAnswerButtonColorHint(0xFF2ECC71.toInt())
+                    .setDeclineButtonColorHint(0xFFE74C3C.toInt())
+            )
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setFullScreenIntent(fullScreen, true) // только открывает экран
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .build()
+
+        NotificationManagerCompat.from(this).notify(42, notif)
     }
 
     private fun ensureCallChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            val nm = getSystemService(NotificationManager::class.java)!!
-            if (nm.getNotificationChannel(CALLS_CH_ID) == null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            val existing = nm.getNotificationChannel(CALLS_CH_ID)
+
+            // если канал уже есть и в нём включён звук — удалим и создадим заново тихий
+            if (existing == null || existing.sound != null) {
+                if (existing != null) nm.deleteNotificationChannel(CALLS_CH_ID)
                 val ch = NotificationChannel(
                     CALLS_CH_ID, "Входящие звонки", NotificationManager.IMPORTANCE_HIGH
                 ).apply {
-                    description = "Показывает экран входящего звонка"
+                    description = "Полноэкранные вызовы"
                     lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                    setShowBadge(false)
-                    // Делаем канал «звонковым»
-                    val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                    val attrs = AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                    setSound(uri, attrs)
-                    try { setBypassDnd(true) } catch (_: Throwable) {}
+                    setSound(null, null) // 🔇 никаких системных звуков — звуком рулит сервис
+                    enableVibration(true)
+                    enableLights(true)
                 }
                 nm.createNotificationChannel(ch)
             }

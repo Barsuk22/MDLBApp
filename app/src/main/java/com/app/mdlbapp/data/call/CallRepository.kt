@@ -5,7 +5,13 @@ import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 
 data class SdpBlob(val type: String = "", val sdp: String = "")
 data class CallDoc(
@@ -159,6 +165,31 @@ object CallRepository {
             trySend(CallDoc(caller, callee, state, decOffer(), decAnswer()))
         }
         awaitClose { reg.remove() }
+    }
+
+    // ——— один раз получить расшифрованное состояние звонка ———
+    suspend fun watchCallDecryptedOnce(
+        tid: String,
+        callId: String,
+        keyB64: String
+    ): CallDoc? {
+        // берём ПЕРВОЕ НЕ-NULL значение из watchCallDecrypted и возвращаем
+        return watchCallDecrypted(tid, callId, keyB64)
+            .filterNotNull()
+            .firstOrNull()
+    }
+
+    // ——— (опционально) подождать именно оффер, с таймаутом ———
+    suspend fun waitForDecryptedOffer(
+        tid: String,
+        callId: String,
+        keyB64: String,
+        timeoutMs: Long = 10_000
+    ): SdpBlob? = withTimeout(timeoutMs) {
+        watchCallDecrypted(tid, callId, keyB64)
+            .filter { it?.offer != null }
+            .map { it!!.offer }
+            .first()
     }
 
     fun watchIceDecrypted(tid: String, callId: String, keyB64: String) = callbackFlow<IceBlob> {

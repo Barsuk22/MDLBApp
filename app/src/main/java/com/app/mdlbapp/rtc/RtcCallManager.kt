@@ -61,8 +61,27 @@ class RtcCallManager(
         deviceNames.firstOrNull { isFrontFacing(it) }?.let { createCapturer(it, null) }
     }
 
-    val localView = SurfaceViewRenderer(ctx).apply { init(egl.eglBaseContext, null); setMirror(true) }
-    val remoteView = SurfaceViewRenderer(ctx).apply { init(egl.eglBaseContext, null) }
+    val localPreviewView = SurfaceViewRenderer(ctx).apply {
+        init(egl.eglBaseContext, null)
+        setMirror(true)
+        setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+        setZOrderMediaOverlay(false)   // полноэкранный — не overlay
+    }
+    val localPipView = SurfaceViewRenderer(ctx).apply {
+        init(egl.eglBaseContext, null)
+        setMirror(true)
+        setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+        setZOrderMediaOverlay(true)
+    }
+
+    val remoteView = SurfaceViewRenderer(ctx).apply {
+        init(egl.eglBaseContext, null)
+        setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+        setZOrderMediaOverlay(false)
+    }
+
+    private val _remoteHasVideo = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val remoteHasVideo: kotlinx.coroutines.flow.StateFlow<Boolean> get() = _remoteHasVideo
 
     private val pc: PeerConnection = factory.createPeerConnection(
         PeerConnection.RTCConfiguration(
@@ -107,8 +126,15 @@ class RtcCallManager(
             override fun onStandardizedIceConnectionChange(state: PeerConnection.IceConnectionState) {}
 
             // — показываем мамочку в удалённом окне —
+            private val _remoteHasVideo = kotlinx.coroutines.flow.MutableStateFlow(false)
+            val remoteHasVideo: kotlinx.coroutines.flow.StateFlow<Boolean> get() = _remoteHasVideo
+
             override fun onTrack(t: RtpTransceiver) {
-                (t.receiver.track() as? VideoTrack)?.addSink(remoteView)
+                android.util.Log.d("CALL","onTrack: ${t.receiver.track()?.kind()}")
+                (t.receiver.track() as? VideoTrack)?.let { vt ->
+                    vt.addSink(remoteView)
+                    _remoteHasVideo.value = true
+                }
             }
             override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
                 (receiver.track() as? VideoTrack)?.addSink(remoteView)
@@ -134,68 +160,104 @@ class RtcCallManager(
     fun startLocalVideo(w: Int = 720, h: Int = 1280, fps: Int = 30) {
         capturer?.initialize(surfaceHelper, ctx, videoSource.capturerObserver)
         capturer?.startCapture(w, h, fps)
-        videoTrack.addSink(localView)
-    }
+        videoTrack.setEnabled(true)
 
+        // КРИТИЧЕСКОЕ: подвешиваем трек к обоим локальным рендерам
+        try {
+            videoTrack.addSink(localPreviewView)
+            videoTrack.addSink(localPipView)
+        } catch (_: Exception) { }
+    }
+    private var videoSender: RtpSender? = null
     private var mediaAttached = false
-    fun attachMedia(sendVideo: Boolean) {
+
+
+    fun attachMedia(sendVideoInitially: Boolean) {
         if (mediaAttached) return
         mediaAttached = true
-        try { pc.addTrack(audioTrack) } catch (_: Exception) { }
-        if (sendVideo) try { pc.addTrack(videoTrack) } catch (_: Exception) { }
+
+        try { pc.addTrack(audioTrack) } catch (_: Exception) {}
+
+        try {
+            // Добавляем видео-трек, получаем sender (для управления отправкой)
+            videoSender = pc.addTrack(videoTrack)
+
+            // Если начинать нужно «в тихом режиме» — не отправляем (превью локально будет жить)
+            if (!sendVideoInitially) {
+                videoSender?.setTrack(null, false /* takeOwnership параметр не нужен в Android API */)
+                android.util.Log.d("CALL", "video sending = false (detached)")
+            } else {
+                android.util.Log.d("CALL", "video sending = true (attached)")
+            }
+        } catch (_: Exception) {}
     }
 
+    // ✅ Новая функция — включать/выключать ТОЛЬКО отправку (не влияем на превью)
+    fun setVideoSending(enabled: Boolean) {
+        try {
+            val s = videoSender ?: return
+            if (enabled) {
+                s.setTrack(videoTrack, false)
+                android.util.Log.d("CALL", "video sending = true")
+            } else {
+                s.setTrack(null, false)
+                android.util.Log.d("CALL", "video sending = false")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CALL", "setVideoSending failed: ${e.message}")
+        }
+    }
+
+    fun setVideoEnabled(enabled: Boolean) { videoTrack.setEnabled(enabled) }
+
     fun makeOffer(sendVideo: Boolean, onCreated: (String) -> Unit) {
-        attachMedia(sendVideo)
+        attachMedia(sendVideo) // ← ВАЖНО: треки добавляем всегда
         val mc = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", sendVideo.toString()))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
         }
 
         pc.createOffer(object : SdpObserver by sdpStub() {
             override fun onCreateSuccess(desc: SessionDescription) {
                 pc.setLocalDescription(sdpStub(), desc)
-                pc.createOffer(object : SdpObserver by sdpStub() {
-                    override fun onCreateSuccess(desc: SessionDescription) {
-                        pc.setLocalDescription(sdpStub(), desc)
-                        scope.launch {
-                            runCatching {
-                                ensureRtcKey()
-                                val cid = CallRepository.createOutgoingCallEncrypted(
-                                    tid, meUid, peerUid,
-                                    SdpBlob(desc.type.canonical(), desc.description),
-                                    rtcKeyB64!! // <— КЛЮЧ
-                                )
-                                currentCallId = cid
-                                onCreated(cid)
+                scope.launch {
+                    runCatching {
+                        ensureRtcKey()
+                        val cid = CallRepository.createOutgoingCallEncrypted(
+                            tid, meUid, peerUid,
+                            SdpBlob(desc.type.canonical(), desc.description),
+                            rtcKeyB64!!
+                        )
+                        currentCallId = cid
+                        onCreated(cid)
 
-                                // найдём имя звонящего (как видит собеседник)
-                                val callerName = runCatching {
-                                    val meDoc = com.google.firebase.ktx.Firebase.firestore
-                                        .collection("users").document(meUid).get().await()
-                                    meDoc.getString("displayName") ?: "Мамочка"
-                                }.getOrElse { "Мамочка" }
+                        val callerName = runCatching {
+                            val meDoc = com.google.firebase.ktx.Firebase.firestore
+                                .collection("users").document(meUid).get().await()
+                            meDoc.getString("displayName") ?: "Мамочка"
+                        }.getOrElse { "Мамочка" }
 
-                                // пушим Apps Script, чтобы прилетел FCM "type=call"
-                                notifyCallViaAppsScript(
-                                    webHookUrl = com.app.mdlbapp.data.call.PushConfig.WEBHOOK_URL,
-                                    calleeUid  = peerUid,
-                                    callerUid  = meUid,
-                                    callerName = callerName,
-                                    hookSecret = com.app.mdlbapp.data.call.PushConfig.WEBHOOK_SECRET.ifBlank { null }
-                                )
+                        notifyCallViaAppsScript(
+                            webHookUrl = com.app.mdlbapp.data.call.PushConfig.WEBHOOK_URL,
+                            calleeUid  = peerUid,
+                            callerUid  = meUid,
+                            callerName = callerName,
+                            hookSecret = com.app.mdlbapp.data.call.PushConfig.WEBHOOK_SECRET.ifBlank { null }
+                        )
 
-                                listenRemoteIce(cid) // оставим, но он у нас сейчас тоже расшифровывает (см. ниже)
-                            }.onFailure { e ->
-                                android.util.Log.e("CALL", "webhook failed", e)
-                                android.widget.Toast.makeText(ctx, "Не смогла создать звонок: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
-                            }
-                        }
+                        listenRemoteIce(cid)
+                    }.onFailure { e ->
+                        android.util.Log.e("CALL", "webhook failed", e)
+                        android.widget.Toast.makeText(
+                            ctx, "Не смогла создать звонок: ${e.message}",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
                     }
-                }, mc)
+                }
             }
         }, mc)
     }
+
 
     fun acceptOffer(callId: String, offer: SdpBlob, sendVideo: Boolean) {
         currentCallId = callId
@@ -290,12 +352,20 @@ class RtcCallManager(
     fun endCall() {
         if (closed) return
         closed = true
+        try {
+            (ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager).apply {
+                mode = android.media.AudioManager.MODE_NORMAL
+                isSpeakerphoneOn = false
+            }
+        } catch (_: Exception) {}
+
         try { capturer?.stopCapture() } catch (_: Exception) {}
         try { capturer?.dispose() } catch (_: Exception) {}
         try { videoSource.dispose() } catch (_: Exception) {}
         try { audioSource.dispose() } catch (_: Exception) {}
         try { pc.close() } catch (_: Exception) {}
-        try { localView.release() } catch (_: Exception) {}
+        try { localPreviewView.release() } catch (_: Exception) {}
+        try { localPipView.release() } catch (_: Exception) {}
         try { remoteView.release() } catch (_: Exception) {}
         try { egl.release() } catch (_: Exception) {}
     }
@@ -310,7 +380,6 @@ class RtcCallManager(
         if (this == SessionDescription.Type.OFFER) "offer" else "answer"
 
     fun setMicEnabled(enabled: Boolean) { audioTrack.setEnabled(enabled) }
-    fun setVideoEnabled(enabled: Boolean) { videoTrack.setEnabled(enabled) }
     fun switchCamera() { (capturer as? CameraVideoCapturer)?.switchCamera(null) }
     fun setSpeakerphone(on: Boolean) {
         val am = ctx.getSystemService(AUDIO_SERVICE) as AudioManager

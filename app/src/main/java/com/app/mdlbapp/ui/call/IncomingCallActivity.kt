@@ -1,8 +1,10 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
 package com.app.mdlbapp.ui.call
 
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,9 +12,16 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CallEnd
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.MicOff
+import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.VideocamOff
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,11 +35,24 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.NotificationManagerCompat
 import coil.compose.AsyncImage
 import com.app.mdlbapp.MainActivity
 import com.app.mdlbapp.R
 import com.google.firebase.firestore.ktx.firestore
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.ktx.firestore
+import com.app.mdlbapp.data.call.CallRepository
+import com.app.mdlbapp.data.call.CallSounds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
+enum class CallPhase { Ringing, ExchangingKeys, Connecting, Connected }
 
 class IncomingCallActivity : ComponentActivity() {
 
@@ -44,14 +66,82 @@ class IncomingCallActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
 
+
         val initialName   = intent.getStringExtra("fromName") ?: "Мамочка"
         val initialAvatar = intent.getStringExtra("fromAvatar")
         val callerUid     = intent.getStringExtra("callerUid")
+        val autoAccept = intent.getBooleanExtra("autoAccept", false)
+
+
 
         setContent {
             MaterialTheme {
                 var name   by remember { mutableStateOf(initialName) }
                 var avatar by remember { mutableStateOf(initialAvatar) }
+
+                var phase by remember { mutableStateOf(CallPhase.Ringing) }
+                var micOn by remember { mutableStateOf(true) }
+                var camOn by remember { mutableStateOf(false) }
+                var spkOn by remember { mutableStateOf(true) }
+                var sendVideo by remember { mutableStateOf(false) }
+
+
+                var callStartAt by remember { mutableStateOf<Long?>(null) }
+                var durationText by remember { mutableStateOf("00:00") }
+                // --- предпросмотр камеры ---
+                var showCamPreview by remember { mutableStateOf(false) }
+
+                LaunchedEffect(callStartAt) {
+                    if (callStartAt != null) {
+                        while (true) {
+                            val sec = ((SystemClock.elapsedRealtime() - callStartAt!!) / 1000).toInt()
+                            val mm = sec / 60; val ss = sec % 60
+                            durationText = "%02d:%02d".format(mm, ss)
+                            delay(1000)
+                        }
+                    }
+                }
+
+                // когда реально подключились
+                LaunchedEffect(phase) {
+                    if (phase == CallPhase.Connected) {
+                        callStartAt = SystemClock.elapsedRealtime()
+                    }
+                }
+
+                var rtc by remember { mutableStateOf<com.app.mdlbapp.rtc.RtcCallManager?>(null) }
+                var callId by remember { mutableStateOf<String?>(null) }
+                var currentTid by remember { mutableStateOf<String?>(null) }
+                var currentCallId by remember { mutableStateOf<String?>(null) }
+
+                // --- длительность ---
+                LaunchedEffect(callStartAt) {
+                    if (callStartAt != null) {
+                        while (true) {
+                            val sec = ((SystemClock.elapsedRealtime() - callStartAt!!) / 1000).toInt()
+                            val mm = (sec / 60); val ss = sec % 60
+                            durationText = "%02d:%02d".format(mm, ss)
+                            delay(1000)
+                        }
+                    }
+                }
+
+                DisposableEffect(Unit) {
+                    onDispose {
+                        rtc?.endCall()
+                        rtc = null
+                    }
+                }
+
+                // Привязки тумблеров
+                LaunchedEffect(rtc, micOn) { rtc?.setMicEnabled(micOn) }
+                LaunchedEffect(rtc, spkOn) { rtc?.setSpeakerphone(spkOn) }
+                // ВНИМАНИЕ: видео включаем ТОЛЬКО после синей кнопки
+//                LaunchedEffect(rtc) { rtc?.setVideoEnabled(camOn) }
+
+                val act = this@IncomingCallActivity
+                fun toast(msg: String) = android.widget.Toast.makeText(act, msg, android.widget.Toast.LENGTH_SHORT).show()
+
 
                 // Живём на данных профиля собеседника
                 DisposableEffect(callerUid) {
@@ -72,22 +162,229 @@ class IncomingCallActivity : ComponentActivity() {
                     onDispose { reg?.remove() }
                 }
 
+                    // 1) Лямбда принятия – ВНЕ экрана, чтобы была видна и LaunchedEffect, и экрану:
+                    val acceptCall: () -> Unit = {
+                        val act = this@IncomingCallActivity
+                        act.lifecycleScope.launch {
+                            val me = FirebaseAuth.getInstance().currentUser?.uid
+                            val from = callerUid
+
+                            // попросим сервис мгновенно замолчать (если он крутит рингтон)
+                            act.startService(
+                                Intent(act, com.app.mdlbapp.data.call.IncomingCallService::class.java)
+                                    .setAction("com.app.mdlbapp.ACTION_DISMISS")
+                            )
+
+                            if (me == null) { toast("Нет пользователя"); return@launch }
+                            if (from.isNullOrBlank()) { toast("Нет UID звонящего"); return@launch }
+
+                            // 1) ищем чат и свежий звонок
+                            val tid = findTidWith(from, me)
+                            if (tid == null) { toast("Чат не найден"); return@launch }
+                            val callId = findLatestRingingCallId(tid, from, me)
+                            if (callId == null) { toast("Нет активного звонка"); return@launch }
+
+                            // 2) ключики
+                            phase = CallPhase.ExchangingKeys
+                            toast("Получаем ключики…")
+                            val rtcKeyB64 = CallRepository.getOrCreateRtcKeyB64(tid, me, from)
+
+                            // 3) создаём RTC (в state, не локально!)
+                            currentTid = tid
+                            currentCallId = callId
+                            rtc = com.app.mdlbapp.rtc.RtcCallManager(act, tid, me, from)
+                            val rtcNow = rtc!!
+
+                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                runCatching { rtcNow.startLocalVideo() }
+                            }
+
+                            // 4) слушаем состояние звонка
+                            var watchJob: kotlinx.coroutines.Job? = null
+                            watchJob = launch {
+                                CallRepository.watchCallDecrypted(tid, callId, rtcKeyB64).collect { c ->
+                                    if (c?.answer != null && c.state != "connected") {
+                                        CallRepository.setState(tid, callId, "connected")
+                                    }
+                                    if (c?.state == "connected") phase = CallPhase.Connected
+                                    if (c?.state == "ended") {
+                                        CallSounds.playHangupBeep(this)
+                                        watchJob?.cancel()
+                                        rtc?.endCall(); rtc = null
+                                        if (Build.VERSION.SDK_INT >= 21) act.finishAndRemoveTask() else act.finish()
+                                    }
+                                }
+                            }
+
+                            // 5) ждём оффер → отвечаем
+                            phase = CallPhase.Connecting
+                            toast("Соединяемся…")
+                            val cdoc  = CallRepository.watchCallDecryptedOnce(tid, callId, rtcKeyB64)
+                            val offer = cdoc?.offer ?: CallRepository.waitForDecryptedOffer(tid, callId, rtcKeyB64)
+                            if (offer == null) { toast("Не дождались оффера"); return@launch }
+
+                            try {
+                                rtcNow.acceptOffer(callId, offer, sendVideo = false)
+                            } catch (e: Exception) {
+                                toast("Ошибка ответа: ${e.message}")
+                                CallRepository.setState(tid, callId, "ended")
+
+                                watchJob?.cancel()
+                                return@launch
+                            }
+
+                            // 6) тумблеры
+                            launch { rtcNow.setMicEnabled(micOn) }
+                            launch { rtcNow.setVideoEnabled(camOn) }
+                            launch { rtcNow.setSpeakerphone(spkOn) }
+
+
+                        }
+                    }
+
+
                 IncomingCallScreen(
                     name = name,
                     avatarUrl = avatar,
-                    onAccept = {
-                        startActivity(
-                            Intent(this, MainActivity::class.java)
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                                .putExtra("openCall", true)
-                                .putExtras(intent.extras ?: Bundle())
-                        )
-                        finish()
+                    phase = phase,
+                    durationText = durationText,
+                    micOn = micOn, camOn = camOn, spkOn = spkOn,
+                    onToggleMic = { micOn = !micOn },
+                    onToggleCam = {
+                        if (camOn) {
+                            camOn = false
+                            rtc?.setVideoEnabled(false)
+                        } else {
+                            if (rtc != null) showCamPreview = true
+                            else toast("Пока нельзя — идёт соединение")
+                        }
                     },
-                    onDecline = { finish() }
+                    onToggleSpk = { spkOn = !spkOn },
+                    onAccept = acceptCall,
+                    onDecline = {
+                        val act = this@IncomingCallActivity
+                        act.lifecycleScope.launch {
+                            try {
+                                val tid = currentTid
+                                val cid = currentCallId
+                                if (tid != null && cid != null) {
+                                    CallRepository.setState(tid, cid, "ended")
+                                } else {
+                                    withContext(kotlinx.coroutines.Dispatchers.IO) { endLatestRingingForMe(callerUid) }
+                                }
+                            } catch (_: Throwable) { }
+                            finally {
+                                // звук завершения
+                                CallSounds.playHangupBeep(this)
+
+                                act.startService(
+                                    Intent(act, com.app.mdlbapp.data.call.IncomingCallService::class.java)
+                                        .setAction("com.app.mdlbapp.ACTION_DISMISS")
+                                )
+                                rtc?.endCall()
+                                if (Build.VERSION.SDK_INT >= 21) act.finishAndRemoveTask() else act.finish()
+                            }
+                        }
+                    }
                 )
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                if (showCamPreview) {
+                    rtc?.let { r ->
+                        ModalBottomSheet(
+                            onDismissRequest = { showCamPreview = false },
+                            sheetState = sheetState
+                        ) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("Предпросмотр камеры", style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.height(12.dp))
+
+                                AndroidView(
+                                    factory = { r.localPreviewView }, // <— используем r, а не rtc
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(240.dp)
+                                )
+
+                                Spacer(Modifier.height(12.dp))
+                                Button(
+                                    onClick = {
+                                        camOn = true
+                                        r.setVideoSending(true)   // <— включаем отправку на r
+                                        showCamPreview = false
+                                    }
+                                ) { Text("Включить трансляцию") }
+                                Spacer(Modifier.height(12.dp))
+                            }
+                        }
+                    }
+                }
+                LaunchedEffect(autoAccept, callerUid) {
+                    if (autoAccept && !callerUid.isNullOrBlank()) {
+                        act.startService(
+                            Intent(this@IncomingCallActivity, com.app.mdlbapp.data.call.IncomingCallService::class.java)
+                                .setAction("com.app.mdlbapp.ACTION_DISMISS")
+                        )
+                        acceptCall()
+                    }
+                }
             }
         }
+    }
+
+
+    private suspend fun findTidWith(callerUid: String, me: String): String? {
+        val db = com.google.firebase.ktx.Firebase.firestore
+        val q1 = db.collection("chats")
+            .whereEqualTo("mommyUid", callerUid).whereEqualTo("babyUid", me)
+            .limit(1).get().await()
+        if (!q1.isEmpty) return q1.documents.first().id
+        val q2 = db.collection("chats")
+            .whereEqualTo("mommyUid", me).whereEqualTo("babyUid", callerUid)
+            .limit(1).get().await()
+        return q2.documents.firstOrNull()?.id
+    }
+
+    private suspend fun findLatestRingingCallId(
+        tid: String, callerUid: String, me: String
+    ): String? {
+        val db = com.google.firebase.ktx.Firebase.firestore
+        val qs = db.collection("chats").document(tid).collection("calls")
+            .whereEqualTo("callerUid", callerUid)
+            .whereEqualTo("calleeUid", me)
+            .whereEqualTo("state", "ringing")
+            .get().await()
+        return qs.documents.maxByOrNull { it.getTimestamp("createdAt")?.toDate()?.time ?: 0L }?.id
+    }
+
+    private suspend fun endLatestRingingForMe(callerUid: String?) {
+        val me = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val db = com.google.firebase.ktx.Firebase.firestore
+        val caller = callerUid ?: return
+
+        val q1 = db.collection("chats")
+            .whereEqualTo("mommyUid", caller).whereEqualTo("babyUid", me)
+            .limit(1).get().await()
+        val q2 = if (q1.isEmpty) db.collection("chats")
+            .whereEqualTo("mommyUid", me).whereEqualTo("babyUid", caller)
+            .limit(1).get().await() else null
+        val tid = q1.documents.firstOrNull()?.id ?: q2?.documents?.firstOrNull()?.id ?: return
+
+        val docs = db.collection("chats").document(tid).collection("calls")
+            .whereEqualTo("callerUid", caller)
+            .whereEqualTo("calleeUid", me)
+            .whereEqualTo("state", "ringing")
+            .get().await().documents
+
+        val fresh = docs.maxByOrNull { it.getTimestamp("createdAt")?.toDate()?.time ?: 0L } ?: return
+
+        // ВАЖНО: ждём обновление состояния!
+        db.collection("chats").document(tid)
+            .collection("calls").document(fresh.id)
+            .update("state", "ended")
+            .await()
     }
 }
 
@@ -95,44 +392,84 @@ class IncomingCallActivity : ComponentActivity() {
 private fun IncomingCallScreen(
     name: String,
     avatarUrl: String?,
+    phase: CallPhase,
+    durationText: String,
+    micOn: Boolean, camOn: Boolean, spkOn: Boolean,
+    onToggleMic: () -> Unit,
+    onToggleCam: () -> Unit,
+    onToggleSpk: () -> Unit,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
 ) {
-    // нежный «плюшевый» фон без картинок
-    val bg = Brush.verticalGradient(
+    val bgDisconnected = Brush.verticalGradient(
         listOf(Color(0xFF18122B), Color(0xFF33294D), Color(0xFF4C3F78))
     )
+    val bgConnected = Brush.verticalGradient(
+        listOf(Color(0xFF0B3D39), Color(0xFF116B63), Color(0xFF1AA68F))
+    )
+    val bg = if (phase == CallPhase.Connected) bgConnected else bgDisconnected
+
     Surface(color = Color.Transparent) {
-        Box(
-            Modifier.fillMaxSize().background(bg).padding(24.dp),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(Modifier.fillMaxSize().background(bg)) {
+
+            // — верхняя часть — ава + статус —
             Column(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 48.dp, start = 24.dp, end = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // большая кругленькая ава
                 BigAvatar(avatarUrl)
+                Text(
+                    when (phase) {
+                        CallPhase.Ringing        -> "Звонок MDLBApp"
+                        CallPhase.ExchangingKeys -> "Обмен ключиками шифрования…"
+                        CallPhase.Connecting     -> "Соединяемся…"
+                        CallPhase.Connected      -> durationText
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFFEDE7F6)
+                )
+                Text(
+                    name,
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White
+                )
+            }
 
-                Text("Звонок MDLBApp", style = MaterialTheme.typography.titleMedium, color = Color(0xFFEDE7F6))
-                Text(name, style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = Color.White)
-
-                Spacer(Modifier.height(24.dp))
-
-                // две круглые кнопочки напротив
-                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    // отклонить — красная
-                    LargeRoundButton(
+            // — нижняя панель — всегда у самого низа —
+            if (phase == CallPhase.Connected) {
+                CallBottomControls(
+                    spkOn = spkOn, camOn = camOn, micOn = micOn,
+                    onToggleSpk = onToggleSpk,
+                    onToggleCam = onToggleCam,
+                    onToggleMic = onToggleMic,
+                    onHangup    = onDecline,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            } else {
+                // до соединения — «Принять/Отклонить» тоже у низа
+                Row(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 14.dp)
+                        .windowInsetsPadding(WindowInsets.navigationBars),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    CompactActionButton(
                         label = "Отклонить",
                         container = Color(0xFFE74C3C),
-                        icon = { Icon(Icons.Rounded.CallEnd, contentDescription = null, tint = Color.White) },
+                        icon = { Icon(Icons.Rounded.CallEnd, null, tint = Color.White) },
                         onClick = onDecline
                     )
-                    // принять — зелёная
-                    LargeRoundButton(
+                    Spacer(Modifier.width(24.dp))
+                    CompactActionButton(
                         label = "Принять",
                         container = Color(0xFF2ECC71),
-                        icon = { Icon(Icons.Rounded.Call, contentDescription = null, tint = Color.White) },
+                        icon = { Icon(Icons.Rounded.Call, null, tint = Color.White) },
                         onClick = onAccept
                     )
                 }
@@ -142,7 +479,147 @@ private fun IncomingCallScreen(
 }
 
 @Composable
-private fun BigAvatar(photo: String?, size: Dp = 160.dp) {
+private fun CompactActionButton(
+    label: String,
+    container: Color,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit,
+    size: Dp = 56.dp
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        FilledIconButton(
+            onClick = onClick,
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = container),
+            modifier = Modifier.size(size)
+        ) { icon() }
+        Spacer(Modifier.height(4.dp))
+        Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+internal fun CallBottomControls(
+    spkOn: Boolean,
+    camOn: Boolean,
+    micOn: Boolean,
+    onToggleSpk: () -> Unit,
+    onToggleCam: () -> Unit,
+    onToggleMic: () -> Unit,
+    onHangup: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // полупрозрачная «дорожка» у самого низа
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp)
+            .padding(bottom = 12.dp)
+            .windowInsetsPadding(WindowInsets.navigationBars),
+        color = Color.Black.copy(alpha = 0.12f),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 1) Динамик (метка одна и та же, кружок светится при активном)
+            RoundToggleCompact(
+                active = spkOn,
+                labelOn = "Динамик",
+                labelOff = "Динамик",
+                onClick = onToggleSpk,
+                iconOn = { Icon(Icons.Rounded.VolumeUp, null) },
+                iconOff = { Icon(Icons.Rounded.VolumeUp, null) },
+            )
+            // 2) Видео
+            RoundToggleCompact(
+                active = camOn,
+                labelOn = "Выкл. видео",
+                labelOff = "Вкл. видео",
+                onClick = onToggleCam,
+                iconOn = { Icon(Icons.Rounded.VideocamOff, null) },
+                iconOff = { Icon(Icons.Rounded.Videocam, null) },
+            )
+            // 3) Микрофон
+            RoundToggleCompact(
+                active = micOn,
+                labelOn = "Выкл. звук",
+                labelOff = "Вкл. звук",
+                onClick = onToggleMic,
+                iconOn = { Icon(Icons.Rounded.MicOff, null) },
+                iconOff = { Icon(Icons.Rounded.Mic, null) },
+            )
+            // 4) Завершить — красный
+            RoundActionRedCompact(
+                label = "Завершить",
+                onClick = onHangup,
+                icon = { Icon(Icons.Rounded.CallEnd, null, tint = Color.White) }
+            )
+        }
+    }
+}
+
+@Composable
+internal fun RoundToggleCompact(
+    active: Boolean,
+    labelOn: String,
+    labelOff: String,
+    onClick: () -> Unit,
+    iconOn: @Composable () -> Unit,
+    iconOff: @Composable () -> Unit,
+    size: Dp = 56.dp      // компактнее
+) {
+    val container = if (active) Color.White else Color.White.copy(alpha = 0.18f)
+    val content   = if (active) Color.Black else Color.White
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        FilledIconButton(
+            onClick = onClick,
+            colors = IconButtonDefaults.filledIconButtonColors(
+                containerColor = container,
+                contentColor   = content
+            ),
+            modifier = Modifier.size(size)
+        ) {
+            if (active) iconOn() else iconOff()
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (active) labelOn else labelOff,
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall
+        )
+    }
+}
+
+@Composable
+internal fun RoundActionRedCompact(
+    label: String,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+    size: Dp = 56.dp
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        FilledIconButton(
+            onClick = onClick,
+            colors = IconButtonDefaults.filledIconButtonColors(
+                containerColor = Color(0xFFE74C3C),
+                contentColor   = Color.White
+            ),
+            modifier = Modifier.size(size)
+        ) { icon() }
+        Spacer(Modifier.height(4.dp))
+        Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+internal fun BigAvatar(photo: String?, size: Dp = 160.dp) {
     val fallback = painterResource(R.drawable.ic_rule_name)
 
     val dataBitmap = remember(photo) {
@@ -198,3 +675,6 @@ private fun LargeRoundButton(
         Text(label, color = Color.White)
     }
 }
+
+
+

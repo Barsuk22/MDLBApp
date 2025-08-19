@@ -2,6 +2,7 @@
 
 package com.app.mdlbapp.ui.call
 
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
@@ -24,14 +25,21 @@ import com.app.mdlbapp.rtc.RtcCallManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import com.app.mdlbapp.data.call.CallRepository.getOrCreateRtcKeyB64
+import com.app.mdlbapp.data.call.IncomingCallService
 import com.app.mdlbapp.data.call.rememberCallReadinessLauncher
 import java.util.jar.Manifest
 
 @Composable
-fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
+fun CallScreen(
+    tid: String,
+    asCaller: Boolean,
+    navBack: () -> Unit,
+    autoJoin: Boolean = false
+) {
     val ctx   = LocalContext.current
     val scope = rememberCoroutineScope()
     val me    = FirebaseAuth.getInstance().currentUser?.uid ?: return
@@ -107,8 +115,8 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
     // Входящий: ждём "ringing" и сам документ звонка
     val ttlMs = 120_000L
 
-    DisposableEffect(permsOk, asCaller, peerUid, rtcKeyB64) {
-        if (!permsOk || peerUid == null || asCaller || rtcKeyB64 == null) onDispose { }
+    DisposableEffect(asCaller, peerUid, rtcKeyB64) {
+        if (peerUid == null || asCaller || rtcKeyB64 == null) onDispose { }
         else {
             val reg = Firebase.firestore.collection("chats").document(tid)
                 .collection("calls")
@@ -119,16 +127,15 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
                     val docs = qs?.documents.orEmpty()
                     if (docs.isEmpty()) return@addSnapshotListener
 
-                    val fresh = docs.maxByOrNull { it.getTimestamp("createdAt")?.toDate()?.time ?: 0L }!!
+                    val fresh = docs.maxByOrNull { it.getTimestamp("createdAt")?.toDate()?.time ?: 0L } ?: return@addSnapshotListener
                     val created = fresh.getTimestamp("createdAt")?.toDate()?.time ?: 0L
-                    if (created == 0L || System.currentTimeMillis() - created > ttlMs) {
+                    if (created == 0L || System.currentTimeMillis() - created > 120_000L) {
                         scope.launch { runCatching { CallRepository.setState(tid, fresh.id, "ended") } }
                         return@addSnapshotListener
                     }
 
                     if (callId == null) {
                         callId = fresh.id
-                        // ⚠️ не берём сырое fresh.toObject(...) — ждём расшифровку
                         scope.launch {
                             CallRepository.watchCallDecrypted(tid, fresh.id, rtcKeyB64!!)
                                 .collect { c ->
@@ -218,13 +225,17 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
         if (accepting) return
         accepting = true
 
+        // 🔕 попросим сервис убрать heads-up и остановиться, если он крутится
+        ctx.startService(
+            Intent(ctx, IncomingCallService::class.java)
+                .setAction("com.app.mdlbapp.ACTION_DISMISS")
+        )
+
         val cid = callId ?: run { accepting = false; return }
         val offer = callDoc?.offer ?: run { accepting = false; return }
 
-
         try {
             rtc!!.acceptOffer(cid, offer, sendVideo = true)
-            // state=connected ставим не мгновенно, а уже по факту — см. watcher ниже
         } catch (e: Exception) {
             Toast.makeText(ctx, "Не удалось ответить: ${e.message}", Toast.LENGTH_LONG).show()
             accepting = false
@@ -236,6 +247,16 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
         // что делать, когда всё включено:
         accept()
     }
+
+    // !!! Автопринять входящий, если есть offer и ещё нет answer
+    LaunchedEffect(autoJoin, permsOk, asCaller, callId, callDoc?.offer, callDoc?.answer) {
+        if (autoJoin && permsOk && !asCaller &&
+            callId != null && callDoc?.offer != null && callDoc?.answer == null && !accepting
+        ) {
+            launchReadinessToAccept() // он сам проверит каналы/разрешения и вызовет accept()
+        }
+    }
+
 
     LaunchedEffect(callDoc?.answer, callDoc?.state) {
         if (callDoc?.answer != null || callDoc?.state == "connected") accepting = false
@@ -276,7 +297,7 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
 
             Text("Ты:")
-            AndroidView({ rtc!!.localView }, Modifier.fillMaxWidth().height(200.dp))
+            AndroidView({ rtc!!.localPreviewView }, Modifier.fillMaxWidth().height(200.dp))
             Spacer(Modifier.height(8.dp))
             Text("Мамочка:")
             AndroidView({ rtc!!.remoteView }, Modifier.fillMaxWidth().height(200.dp))
@@ -285,9 +306,9 @@ fun CallScreen(tid: String, asCaller: Boolean, navBack: () -> Unit) {
             var micOn by remember { mutableStateOf(true) }
             var camOn by remember { mutableStateOf(true) }
             var spkOn by remember { mutableStateOf(true) }
-            LaunchedEffect(micOn) { rtc!!.setMicEnabled(micOn) }
-            LaunchedEffect(camOn) { rtc!!.setVideoEnabled(camOn) }
-            LaunchedEffect(spkOn) { rtc!!.setSpeakerphone(spkOn) }
+//            LaunchedEffect(micOn) { rtc!!.setMicEnabled(micOn) }
+//            LaunchedEffect(camOn) { rtc!!.setVideoEnabled(camOn) }
+//            LaunchedEffect(spkOn) { rtc!!.setSpeakerphone(spkOn) }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 FilledTonalButton(onClick = { micOn = !micOn }) { Text(if (micOn) "Микрофон Вкл" else "Микрофон Выкл") }
@@ -333,14 +354,27 @@ fun EnsureCallPermissions(
 }
 
 @Composable
-fun WatchIncomingCall(navController: NavHostController) {
+fun WatchIncomingCall(
+    navController: NavHostController,
+    preferSystemHeadsUp: Boolean = true // 👶 по умолчанию — только верхнее увед
+) {
     val me = FirebaseAuth.getInstance().currentUser?.uid ?: return
     var tid by remember { mutableStateOf<String?>(null) }
-    var lastCid by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val ttlMs = 120_000L
 
-    // находим tid пары (без падений)
+    // нужен контекст, чтобы проверить разрешение на уведомления
+    val ctx = LocalContext.current
+    val notificationsOk by remember {
+        mutableStateOf(
+            NotificationManagerCompat.from(ctx).areNotificationsEnabled() &&
+                    (Build.VERSION.SDK_INT < 33 ||
+                            ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS)
+                            == PackageManager.PERMISSION_GRANTED)
+        )
+    }
+
+    // находим tid пары
     LaunchedEffect(me) {
         runCatching {
             val db = Firebase.firestore
@@ -352,11 +386,12 @@ fun WatchIncomingCall(navController: NavHostController) {
                 .whereEqualTo("mommyUid", pair).whereEqualTo("babyUid", me)
                 .limit(1).get().await() else null
             tid = q1.documents.firstOrNull()?.id ?: q2?.documents?.firstOrNull()?.id
-        }.onFailure { e -> android.util.Log.e("WatchIncomingCall", "init fail", e) }
+        }
     }
 
-    DisposableEffect(tid) {
+    DisposableEffect(tid, preferSystemHeadsUp, notificationsOk) {
         if (tid == null) return@DisposableEffect onDispose {}
+
         val reg = Firebase.firestore.collection("chats").document(tid!!)
             .collection("calls")
             .whereEqualTo("calleeUid", me)
@@ -366,24 +401,23 @@ fun WatchIncomingCall(navController: NavHostController) {
                 val docs = qs?.documents.orEmpty()
                 if (docs.isEmpty()) return@addSnapshotListener
 
-                // берём самый свежий
-                val fresh = docs.maxByOrNull { it.getTimestamp("createdAt")?.toDate()?.time ?: 0L }!!
+                val fresh = docs.maxByOrNull { it.getTimestamp("createdAt")?.toDate()?.time ?: 0L } ?: return@addSnapshotListener
                 val created = fresh.getTimestamp("createdAt")?.toDate()?.time ?: 0L
                 if (created == 0L || System.currentTimeMillis() - created > ttlMs) {
                     scope.launch { runCatching { CallRepository.setState(tid!!, fresh.id, "ended") } }
                     return@addSnapshotListener
                 }
-                // если уже есть answer — не тащим экран
-                if (fresh.getString("answerEnc") != null || (fresh.get("answer") as? Map<*, *>) != null)
-                    return@addSnapshotListener
 
+                // ⛔️ ВАЖНО: если просим только системный heads-up — НИЧЕГО не навигируем!
+                if (preferSystemHeadsUp && notificationsOk) {
+                    // оставляем всё сервису уведомлений; тут仅 следим за протуханием
+                    return@addSnapshotListener
+                }
+
+                // ФОЛБЭК: если уведомления выключены — открываем наш дефолтный экран
                 val isCallScreen = navController.currentBackStackEntry
                     ?.destination?.route?.startsWith("call") == true
-
-                if (!isCallScreen && lastCid != fresh.id) {
-                    lastCid = fresh.id
-                    navController.navigate("call/${tid!!}/0")
-                }
+                if (!isCallScreen) navController.navigate("call/${tid!!}/0")
             }
         onDispose { reg.remove() }
     }

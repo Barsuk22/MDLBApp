@@ -534,10 +534,16 @@
                                     MommyOnboardingFlow(navController = navController)
                                 }
 
-                                composable("call/{tid}/{asCaller}") { back ->
+                                composable("call/{tid}/{asCaller}?auto={auto}") { back ->
                                     val tid = back.arguments?.getString("tid")!!
                                     val asCaller = back.arguments?.getString("asCaller") == "1"
-                                    com.app.mdlbapp.ui.call.CallScreen(tid = tid, asCaller = asCaller, navBack = { navController.popBackStack() })
+                                    val auto = back.arguments?.getString("auto") == "1"
+                                    com.app.mdlbapp.ui.call.CallScreen(
+                                        tid = tid,
+                                        asCaller = asCaller,
+                                        navBack = { navController.popBackStack() },
+                                        autoJoin = auto                 // ← новый параметр
+                                    )
                                 }
 //                                composable("device_setup") {
 //                                    DeviceSetupFlow(navController) {
@@ -565,6 +571,16 @@
 //                                    }
 //                                }
                             }
+                            LaunchedEffect(Unit) {
+                                if (intent?.getBooleanExtra("openCall", false) == true) {
+                                    val tid = intent.getStringExtra("tid")
+                                    val asCaller = if (intent.getBooleanExtra("asCaller", false)) "1" else "0"
+                                    val auto = if (intent.getBooleanExtra("autoJoin", false)) "1" else "0"
+                                    if (!tid.isNullOrBlank()) {
+                                        navController.navigate("call/$tid/$asCaller?auto=$auto")
+                                    }
+                                }
+                            }
                             var showWatcher by remember { mutableStateOf(false) }
                             LaunchedEffect(Unit) {
                                 val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
@@ -575,7 +591,7 @@
                                 showWatcher = !paired.isNullOrBlank()
                             }
                             if (showWatcher) {
-                                WatchIncomingCall(navController)
+                                WatchIncomingCall(navController, preferSystemHeadsUp = true)
                             }
                         }
                         ExactAlarmPrompt()
