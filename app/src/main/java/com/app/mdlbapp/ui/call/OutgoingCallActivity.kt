@@ -36,11 +36,14 @@ import androidx.compose.ui.draw.clip
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.webrtc.MediaConstraints
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 
 enum class OutPhase { Request, Waiting, Calling, ExchangingKeys, Connected }
+
+
 
 class OutgoingCallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,6 +79,8 @@ class OutgoingCallActivity : ComponentActivity() {
                 var callId by remember { mutableStateOf<String?>(null) }
                 val me = FirebaseAuth.getInstance().currentUser?.uid
 
+
+
                 // отправляем ли видео собеседнику (по умолчанию — нет)
                 var sendVideo by remember { mutableStateOf(false) }
 
@@ -85,6 +90,12 @@ class OutgoingCallActivity : ComponentActivity() {
                 // --- длительность ---
                 var callStartAt by remember { mutableStateOf<Long?>(null) }
                 var durationText by remember { mutableStateOf("00:00") }
+
+                val remoteHas by remember(rtc) { rtc?.remoteHasVideo ?: MutableStateFlow(false) }
+                    .collectAsState(initial = false)
+
+                val showVideoLayer = rtc != null && !showCamPreview && (sendVideo || remoteHas)
+                val showHeader     = !showVideoLayer
 
                 LaunchedEffect(callStartAt) {
                     if (callStartAt != null) {
@@ -182,17 +193,18 @@ class OutgoingCallActivity : ComponentActivity() {
                 }
 
                 Box(Modifier.fillMaxSize()) {
-                    if (rtc != null && !showCamPreview && phase >= OutPhase.ExchangingKeys) {
-                        // selfVisible — когда реально шлём видео
-                        CallSurfaces(
-                            rtc = rtc!!,
-                            selfVisible = sendVideo,
-                            modifier = Modifier.fillMaxSize()
+                    // 🟢 1) Логика показа слоёв
+                    val showRemote = rtc != null && !showCamPreview && remoteHas
+                    val showSelfPip = rtc != null && !showCamPreview && sendVideo
+
+                    // 🟢 2) Большой удалённый слой — ТОЛЬКО когда пришёл первый кадр
+                    if (showRemote) {
+                        AndroidView(
+                            factory = { rtc!!.remoteView },
+                            modifier = Modifier.matchParentSize()
                         )
                     }
-
-                    // UI — как у входящего, только фазы другие и кнопочки всегда снизу
-                    val showVideoLayer = rtc != null && !showCamPreview && phase >= OutPhase.ExchangingKeys
+                    // 🟢 3) UI вызова: фон и заголовки показываем, если нет удалённого видео
                     OutgoingCallScreen(
                         name = name,
                         avatarUrl = avatar,
@@ -202,20 +214,32 @@ class OutgoingCallActivity : ComponentActivity() {
                         onToggleMic = { micOn = !micOn },
                         onToggleCam = {
                             if (sendVideo) {
-                                // выключаем ОТПРАВКУ (превью остаётся локально)
                                 sendVideo = false
                                 rtc?.setVideoSending(false)
                             } else {
-                                // открываем полноэкранный предпросмотр
                                 showCamPreview = true
                             }
                         },
                         onToggleSpk = { spkOn = !spkOn },
                         onHangup = { hangup() },
                         showControls = !showCamPreview,
-                        drawBg = !showVideoLayer
+                        drawBg = !showRemote,     // << фон зелёный, пока нет удалённого видео
+                        showHeader = !showRemote  // << заголовок виден, пока нет удалённого видео
                     )
-                    // Фуллскрин-предпросмотр без отступов и с автопритушенными системными барами
+
+                    // 🟢 4) Маленькое «пип»-окошко со СВОЕЙ камерой — отдельно
+                    if (showSelfPip) {
+                        AndroidView(
+                            factory = { rtc!!.localPipView },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(12.dp)
+                                .size(120.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                        )
+                    }
+
+                    // 🟢 5) Фуллскрин-предпросмотр (как у тебя и было)
                     if (showCamPreview) {
                         rtc?.let { r ->
                             FullscreenCamPreview(
@@ -223,8 +247,8 @@ class OutgoingCallActivity : ComponentActivity() {
                                 onConfirm = {
                                     showCamPreview = false
                                     scope.launch {
-                                        kotlinx.coroutines.delay(16)
-                                        r.setVideoSending(true) // <-- r, не rtc
+                                        delay(16)
+                                        r.setVideoSending(true)
                                         sendVideo = true
                                     }
                                 },
@@ -318,7 +342,8 @@ private fun OutgoingCallScreen(
     onToggleCam: () -> Unit,
     onToggleSpk: () -> Unit,
     onHangup: () -> Unit,
-    drawBg: Boolean
+    drawBg: Boolean,
+    showHeader: Boolean = true
 ) {
     val bgDisconnected = androidx.compose.ui.graphics.Brush.verticalGradient(
         listOf(Color(0xFF18122B), Color(0xFF33294D), Color(0xFF4C3F78))
@@ -333,24 +358,26 @@ private fun OutgoingCallScreen(
         val layered = if (drawBg) base.background(bg) else base
         Box(layered) {
 
-            Column(
-                Modifier.align(Alignment.TopCenter).padding(top = 48.dp, start = 24.dp, end = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                BigAvatar(avatarUrl)
-                Text(
-                    when (phase) {
-                        OutPhase.Request       -> "Готовим запрос…"
-                        OutPhase.Waiting       -> "Ждём ответа…"
-                        OutPhase.Calling       -> "Звоним…"
-                        OutPhase.ExchangingKeys-> "Обмен ключиками…"
-                        OutPhase.Connected      -> durationText
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color(0xFFEDE7F6)
-                )
-                Text(name, style = MaterialTheme.typography.headlineMedium, color = Color.White)
+            if (showHeader) {
+                Column(
+                    Modifier.align(Alignment.TopCenter).padding(top = 48.dp, start = 24.dp, end = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    BigAvatar(avatarUrl)
+                    Text(
+                        when (phase) {
+                            OutPhase.Request       -> "Готовим запрос…"
+                            OutPhase.Waiting       -> "Ждём ответа…"
+                            OutPhase.Calling       -> "Звоним…"
+                            OutPhase.ExchangingKeys-> "Обмен ключиками…"
+                            OutPhase.Connected      -> durationText
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFFEDE7F6)
+                    )
+                    Text(name, style = MaterialTheme.typography.headlineMedium, color = Color.White)
+                }
             }
 
             // для звонящего — четыре кнопочки ВСЕГДА видны

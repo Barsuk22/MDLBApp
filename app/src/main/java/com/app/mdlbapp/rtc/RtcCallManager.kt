@@ -40,6 +40,43 @@ class RtcCallManager(
         }
     }
 
+    private var videoSender: RtpSender? = null
+    private var mediaAttached = false
+    fun attachMedia(sendVideoInitially: Boolean) {
+        if (mediaAttached) return
+        mediaAttached = true
+
+        // — АУДИО —
+        try {
+            // Явно создаём трансивер с направлением SEND_RECV (чтобы м-линия точно была)
+            audioTransceiver = pc.addTransceiver(
+                audioTrack,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
+            )
+        } catch (_: Throwable) {
+            // запасной путь — старый addTrack
+            try { pc.addTrack(audioTrack) } catch (_: Exception) {}
+        }
+
+        // — ВИДЕО —
+        try {
+            // То же самое для видео — и берём sender из трансивера
+            videoTransceiver = pc.addTransceiver(
+                videoTrack,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
+            )
+            videoSender = videoTransceiver?.sender
+        } catch (_: Throwable) {
+            // если в твоей сборке нет addTransceiver(track, init) — падаем на проверенный addTrack
+            try { videoSender = pc.addTrack(videoTrack) } catch (_: Exception) {}
+        }
+
+        // Стартуем отправку правильно (без отцепления трека)
+        setVideoActiveInternal(sendVideoInitially)
+        android.util.Log.d("CALL", "video sending = $sendVideoInitially (via encodings.active/fallback)")
+    }
+
+
     private val egl = EglBase.create()
     private val factory: PeerConnectionFactory by lazy {
         ensureInit(ctx) // <<< ВАЖНО: инициализируем один раз на процесс
@@ -82,7 +119,16 @@ class RtcCallManager(
 
     private val _remoteHasVideo = kotlinx.coroutines.flow.MutableStateFlow(false)
     val remoteHasVideo: kotlinx.coroutines.flow.StateFlow<Boolean> get() = _remoteHasVideo
-
+    private inner class FirstFrameSink : VideoSink {
+        private var fired = false
+        override fun onFrame(frame: VideoFrame) {
+            if (!fired) {
+                fired = true
+                _remoteHasVideo.value = true   // ← именно здесь, на первом кадре
+            }
+        }
+    }
+    private val firstFrameSink = FirstFrameSink()
     private val pc: PeerConnection = factory.createPeerConnection(
         PeerConnection.RTCConfiguration(
             listOf(
@@ -127,14 +173,16 @@ class RtcCallManager(
 
             // — показываем мамочку в удалённом окне —
             override fun onTrack(t: RtpTransceiver) {
-                android.util.Log.d("CALL","onTrack: ${t.receiver.track()?.kind()}")
                 (t.receiver.track() as? VideoTrack)?.let { vt ->
                     vt.addSink(remoteView)
-                    _remoteHasVideo.value = true
+                    vt.addSink(firstFrameSink)   // ← добавили «слушателя кадра»
                 }
             }
             override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
-                (receiver.track() as? VideoTrack)?.addSink(remoteView)
+                (receiver.track() as? VideoTrack)?.let { vt ->
+                    vt.addSink(remoteView)
+                    vt.addSink(firstFrameSink)
+                }
             }
 
             // остальное — пустышки
@@ -165,45 +213,14 @@ class RtcCallManager(
             videoTrack.addSink(localPipView)
         } catch (_: Exception) { }
     }
-    private var videoSender: RtpSender? = null
-    private var mediaAttached = false
-
-
-    fun attachMedia(sendVideoInitially: Boolean) {
-        if (mediaAttached) return
-        mediaAttached = true
-
-        try { pc.addTrack(audioTrack) } catch (_: Exception) {}
-
-        try {
-            // Добавляем видео-трек, получаем sender (для управления отправкой)
-            videoSender = pc.addTrack(videoTrack)
-
-            // Если начинать нужно «в тихом режиме» — не отправляем (превью локально будет жить)
-            if (!sendVideoInitially) {
-                videoSender?.setTrack(null, false /* takeOwnership параметр не нужен в Android API */)
-                android.util.Log.d("CALL", "video sending = false (detached)")
-            } else {
-                android.util.Log.d("CALL", "video sending = true (attached)")
-            }
-        } catch (_: Exception) {}
-    }
 
     // ✅ Новая функция — включать/выключать ТОЛЬКО отправку (не влияем на превью)
     fun setVideoSending(enabled: Boolean) {
-        try {
-            val s = videoSender ?: return
-            if (enabled) {
-                s.setTrack(videoTrack, false)
-                android.util.Log.d("CALL", "video sending = true")
-            } else {
-                s.setTrack(null, false)
-                android.util.Log.d("CALL", "video sending = false")
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("CALL", "setVideoSending failed: ${e.message}")
-        }
+        setVideoActiveInternal(enabled)
+        android.util.Log.d("CALL", "video sending = $enabled (encodings.active or setTrack fallback)")
     }
+
+
 
     fun setVideoEnabled(enabled: Boolean) { videoTrack.setEnabled(enabled) }
 
@@ -256,6 +273,28 @@ class RtcCallManager(
     }
 
 
+
+    private fun setVideoActiveInternal(active: Boolean) {
+        val s = videoSender ?: return
+        // Сначала пробуем «правильный» способ — через encodings.active
+        kotlin.runCatching {
+            val p = s.parameters
+            if (p.encodings.isNotEmpty()) {
+                val e = p.encodings[0]
+                if (e.active != active) {
+                    e.active = active
+                    s.parameters = p
+                }
+                return
+            }
+            // Если encodings пуст — используем надёжный fallback
+            if (active) s.setTrack(videoTrack, false) else s.setTrack(null, false)
+        }.onFailure {
+            // Ещё один страховочный маршрут
+            try { if (active) s.setTrack(videoTrack, false) else s.setTrack(null, false) } catch (_: Exception) {}
+        }
+    }
+
     fun acceptOffer(callId: String, offer: SdpBlob, sendVideo: Boolean) {
         currentCallId = callId
         attachMedia(sendVideo)  // добавим треки (с антидублем см. Патч B ниже)
@@ -264,6 +303,11 @@ class RtcCallManager(
         pc.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
                 // теперь создавать ответ МОЖНО
+
+                val answerConstraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                }
                 pc.createAnswer(object : SdpObserver {
                     override fun onCreateSuccess(desc: SessionDescription) {
                         // сначала локально применяем answer…
@@ -307,7 +351,7 @@ class RtcCallManager(
 
                     override fun onSetSuccess() {}
                     override fun onSetFailure(p0: String?) {}
-                }, MediaConstraints())
+                }, answerConstraints)
             }
 
             override fun onSetFailure(err: String?) {
@@ -321,6 +365,8 @@ class RtcCallManager(
             override fun onCreateFailure(p0: String?) {}
         }, remote)
     }
+
+
 
     fun setRemoteAnswer(answer: SdpBlob) {
         pc.setRemoteDescription(sdpStub(), SessionDescription(SessionDescription.Type.ANSWER, answer.sdp))
@@ -383,4 +429,10 @@ class RtcCallManager(
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         am.isSpeakerphoneOn = on
     }
+
+    private var videoTransceiver: RtpTransceiver? = null
+    private var audioTransceiver: RtpTransceiver? = null
+
+
+
 }

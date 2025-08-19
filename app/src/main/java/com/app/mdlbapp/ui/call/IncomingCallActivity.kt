@@ -50,6 +50,7 @@ import com.app.mdlbapp.data.call.CallRepository
 import com.app.mdlbapp.data.call.CallSounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 
 enum class CallPhase { Ringing, ExchangingKeys, Connecting, Connected }
@@ -91,6 +92,9 @@ class IncomingCallActivity : ComponentActivity() {
                 // --- предпросмотр камеры ---
                 var showCamPreview by remember { mutableStateOf(false) }
 
+
+
+
                 LaunchedEffect(callStartAt) {
                     if (callStartAt != null) {
                         while (true) {
@@ -113,6 +117,12 @@ class IncomingCallActivity : ComponentActivity() {
                 var callId by remember { mutableStateOf<String?>(null) }
                 var currentTid by remember { mutableStateOf<String?>(null) }
                 var currentCallId by remember { mutableStateOf<String?>(null) }
+
+                val remoteHas by remember(rtc) {
+                    rtc?.remoteHasVideo ?: MutableStateFlow(false)
+                }.collectAsState(initial = false)
+                val showVideoLayer = rtc != null && !showCamPreview && remoteHas
+                val showHeader     = !showVideoLayer
 
                 // --- длительность ---
                 LaunchedEffect(callStartAt) {
@@ -242,69 +252,20 @@ class IncomingCallActivity : ComponentActivity() {
                         }
                     }
 
-
-                IncomingCallScreen(
-                    name = name,
-                    avatarUrl = avatar,
-                    phase = phase,
-                    durationText = durationText,
-                    micOn = micOn, camOn = camOn, spkOn = spkOn,
-                    onToggleMic = { micOn = !micOn },
-                    onToggleCam = {
-                        if (camOn) {
-                            camOn = false
-                            rtc?.setVideoEnabled(false)
-                        } else {
-                            if (rtc != null) showCamPreview = true
-                            else toast("Пока нельзя — идёт соединение")
-                        }
-                    },
-                    onToggleSpk = { spkOn = !spkOn },
-                    drawBg = !(rtc != null && !showCamPreview && phase >= CallPhase.Connecting),
-                    onAccept = acceptCall,
-                    onDecline = {
-                        val act = this@IncomingCallActivity
-                        act.lifecycleScope.launch {
-                            try {
-                                val tid = currentTid
-                                val cid = currentCallId
-                                if (tid != null && cid != null) {
-                                    CallRepository.setState(tid, cid, "ended")
-                                } else {
-                                    withContext(kotlinx.coroutines.Dispatchers.IO) { endLatestRingingForMe(callerUid) }
-                                }
-                            } catch (_: Throwable) { }
-                            finally {
-                                // звук завершения
-                                CallSounds.playHangupBeep(this)
-
-                                act.startService(
-                                    Intent(act, com.app.mdlbapp.data.call.IncomingCallService::class.java)
-                                        .setAction("com.app.mdlbapp.ACTION_DISMISS")
-                                )
-                                rtc?.endCall()
-                                if (Build.VERSION.SDK_INT >= 21) act.finishAndRemoveTask() else act.finish()
-                            }
-                        }
-                    }
-                )
                 val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
                 Box(Modifier.fillMaxSize()) {
-                    val showVideoLayer =
-                        rtc != null && !showCamPreview && phase >= CallPhase.Connecting
+                    val showRemote = rtc != null && !showCamPreview && remoteHas
+                    val showSelfPip = rtc != null && !showCamPreview && sendVideo
 
-                    // 1) Видеослой
-                    if (showVideoLayer) {
-                        rtc?.let { r ->
-                            CallSurfaces(
-                                rtc = r,
-                                selfVisible = sendVideo,         // покажем своё окошко, если реально шлём
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
+                    // Большой удалённый — только когда есть кадры
+                    if (showRemote) {
+                        AndroidView(
+                            factory = { rtc!!.remoteView },
+                            modifier = Modifier.matchParentSize()
+                        )
                     }
 
-                    // 2) Интерфейс (фон выключаем, если есть видео)
+                    // Экран входящего вызова с правильным фоном
                     IncomingCallScreen(
                         name = name,
                         avatarUrl = avatar,
@@ -313,20 +274,30 @@ class IncomingCallActivity : ComponentActivity() {
                         micOn = micOn, camOn = camOn, spkOn = spkOn,
                         onToggleMic = { micOn = !micOn },
                         onToggleCam = {
-                            if (sendVideo) {
-                                rtc?.setVideoSending(false); sendVideo = false; camOn = false
-                            } else {
-                                if (rtc != null) showCamPreview =
-                                    true else toast("Пока нельзя — идёт соединение")
-                            }
+                            if (sendVideo) { rtc?.setVideoSending(false); sendVideo = false; camOn = false }
+                            else if (rtc != null) showCamPreview = true
+                            else toast("Пока нельзя — идёт соединение")
                         },
                         onToggleSpk = { spkOn = !spkOn },
                         onAccept = acceptCall,
-                        onDecline = { /* как у тебя */ },
-                        drawBg = !showVideoLayer                       // 👈 важненько
+                        onDecline = { /* твоя логика */ },
+                        drawBg = !showRemote,     // зелёненький фон до появления кадра
+                        showHeader = !showRemote
                     )
 
-                    // 3) Лист предпросмотра
+                    // Маленькое окно со своей камерой — отдельно
+                    if (showSelfPip) {
+                        AndroidView(
+                            factory = { rtc!!.localPipView },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(12.dp)
+                                .size(120.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                        )
+                    }
+
+                    // Лист/модалка предпросмотра — как у тебя
                     if (showCamPreview) {
                         rtc?.let { r ->
                             ModalBottomSheet(
@@ -337,10 +308,7 @@ class IncomingCallActivity : ComponentActivity() {
                                     Modifier.fillMaxWidth().padding(16.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    Text(
-                                        "Предпросмотр камеры",
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
+                                    Text("Предпросмотр камеры", style = MaterialTheme.typography.titleMedium)
                                     Spacer(Modifier.height(12.dp))
                                     AndroidView(
                                         factory = { r.localPreviewView },
@@ -349,8 +317,8 @@ class IncomingCallActivity : ComponentActivity() {
                                     Spacer(Modifier.height(12.dp))
                                     Button(onClick = {
                                         camOn = true
-                                        r.setVideoSending(true) // начинаем ОТПРАВКУ
-                                        sendVideo = true        // 👈 не забыть обновить стейт
+                                        r.setVideoSending(true)
+                                        sendVideo = true
                                         showCamPreview = false
                                     }) { Text("Включить трансляцию") }
                                     Spacer(Modifier.height(12.dp))
@@ -438,7 +406,8 @@ private fun IncomingCallScreen(
     onToggleSpk: () -> Unit,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
-    drawBg: Boolean
+    drawBg: Boolean,
+    showHeader: Boolean = true
 ) {
     val bgDisconnected = Brush.verticalGradient(
         listOf(Color(0xFF18122B), Color(0xFF33294D), Color(0xFF4C3F78))
@@ -449,32 +418,35 @@ private fun IncomingCallScreen(
     val bg = if (phase == CallPhase.Connected) bgConnected else bgDisconnected
 
     Surface(color = Color.Transparent) {
-        Box(Modifier.fillMaxSize().background(bg)) {
+        val base = Modifier.fillMaxSize()
+        val layered = if (drawBg) base.background(bg) else base
+        Box(layered) {
 
-            // — верхняя часть — ава + статус —
-            Column(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 48.dp, start = 24.dp, end = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                BigAvatar(avatarUrl)
-                Text(
-                    when (phase) {
-                        CallPhase.Ringing        -> "Звонок MDLBApp"
-                        CallPhase.ExchangingKeys -> "Обмен ключиками шифрования…"
-                        CallPhase.Connecting     -> "Соединяемся…"
-                        CallPhase.Connected      -> durationText
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color(0xFFEDE7F6)
-                )
-                Text(
-                    name,
-                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                    color = Color.White
-                )
+            if (showHeader) {
+                Column(
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 48.dp, start = 24.dp, end = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    BigAvatar(avatarUrl)
+                    Text(
+                        when (phase) {
+                            CallPhase.Ringing -> "Звонок MDLBApp"
+                            CallPhase.ExchangingKeys -> "Обмен ключиками шифрования…"
+                            CallPhase.Connecting -> "Соединяемся…"
+                            CallPhase.Connected -> durationText
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFFEDE7F6)
+                    )
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White
+                    )
+                }
             }
 
             // — нижняя панель — всегда у самого низа —
@@ -484,7 +456,7 @@ private fun IncomingCallScreen(
                     onToggleSpk = onToggleSpk,
                     onToggleCam = onToggleCam,
                     onToggleMic = onToggleMic,
-                    onHangup    = onDecline,
+                    onHangup = onDecline,
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             } else {
