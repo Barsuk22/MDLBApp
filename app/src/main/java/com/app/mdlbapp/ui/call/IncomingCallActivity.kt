@@ -92,8 +92,7 @@ class IncomingCallActivity : ComponentActivity() {
                 // --- предпросмотр камеры ---
                 var showCamPreview by remember { mutableStateOf(false) }
 
-
-
+                val scope = rememberCoroutineScope()
 
                 LaunchedEffect(callStartAt) {
                     if (callStartAt != null) {
@@ -245,7 +244,7 @@ class IncomingCallActivity : ComponentActivity() {
 
                             // 6) тумблеры
                             launch { rtcNow.setMicEnabled(micOn) }
-                            launch { rtcNow.setVideoEnabled(camOn) }
+//                            launch { rtcNow.setVideoEnabled(camOn) }
                             launch { rtcNow.setSpeakerphone(spkOn) }
 
 
@@ -282,7 +281,8 @@ class IncomingCallActivity : ComponentActivity() {
                         onAccept = acceptCall,
                         onDecline = { /* твоя логика */ },
                         drawBg = !showRemote,     // зелёненький фон до появления кадра
-                        showHeader = !showRemote
+                        showHeader = !showRemote,
+                        showControls = !showCamPreview
                     )
 
                     // Маленькое окно со своей камерой — отдельно
@@ -300,30 +300,19 @@ class IncomingCallActivity : ComponentActivity() {
                     // Лист/модалка предпросмотра — как у тебя
                     if (showCamPreview) {
                         rtc?.let { r ->
-                            ModalBottomSheet(
-                                onDismissRequest = { showCamPreview = false },
-                                sheetState = sheetState
-                            ) {
-                                Column(
-                                    Modifier.fillMaxWidth().padding(16.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text("Предпросмотр камеры", style = MaterialTheme.typography.titleMedium)
-                                    Spacer(Modifier.height(12.dp))
-                                    AndroidView(
-                                        factory = { r.localPreviewView },
-                                        modifier = Modifier.fillMaxWidth().height(240.dp)
-                                    )
-                                    Spacer(Modifier.height(12.dp))
-                                    Button(onClick = {
-                                        camOn = true
+                            FullscreenCamPreview(
+                                rtc = r,
+                                onConfirm = {
+                                    camOn = true
+                                    scope.launch {
+                                        delay(16)
                                         r.setVideoSending(true)
                                         sendVideo = true
                                         showCamPreview = false
-                                    }) { Text("Включить трансляцию") }
-                                    Spacer(Modifier.height(12.dp))
-                                }
-                            }
+                                    }
+                                },
+                                onClose = { showCamPreview = false }
+                            )
                         }
                     }
                 }
@@ -407,7 +396,8 @@ private fun IncomingCallScreen(
     onAccept: () -> Unit,
     onDecline: () -> Unit,
     drawBg: Boolean,
-    showHeader: Boolean = true
+    showHeader: Boolean = true,
+    showControls: Boolean = true
 ) {
     val bgDisconnected = Brush.verticalGradient(
         listOf(Color(0xFF18122B), Color(0xFF33294D), Color(0xFF4C3F78))
@@ -450,7 +440,7 @@ private fun IncomingCallScreen(
             }
 
             // — нижняя панель — всегда у самого низа —
-            if (phase == CallPhase.Connected) {
+            if (phase == CallPhase.Connected && showControls) {
                 CallBottomControls(
                     spkOn = spkOn, camOn = camOn, micOn = micOn,
                     onToggleSpk = onToggleSpk,
@@ -459,7 +449,7 @@ private fun IncomingCallScreen(
                     onHangup = onDecline,
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
-            } else {
+            } else if (phase != CallPhase.Connected) {
                 // до соединения — «Принять/Отклонить» тоже у низа
                 Row(
                     Modifier

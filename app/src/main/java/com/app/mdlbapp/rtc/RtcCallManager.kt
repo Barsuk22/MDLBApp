@@ -206,6 +206,8 @@ class RtcCallManager(
         capturer?.initialize(surfaceHelper, ctx, videoSource.capturerObserver)
         capturer?.startCapture(w, h, fps)
         videoTrack.setEnabled(true)
+        android.util.Log.d("CALL", "startLocalVideo: capture started")
+
 
         // КРИТИЧЕСКОЕ: подвешиваем трек к обоим локальным рендерам
         try {
@@ -218,6 +220,7 @@ class RtcCallManager(
     fun setVideoSending(enabled: Boolean) {
         setVideoActiveInternal(enabled)
         android.util.Log.d("CALL", "video sending = $enabled (encodings.active or setTrack fallback)")
+        android.util.Log.d("CALL", "setVideoSending=$enabled")
     }
 
 

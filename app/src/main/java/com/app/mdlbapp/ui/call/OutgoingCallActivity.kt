@@ -265,7 +265,7 @@ class OutgoingCallActivity : ComponentActivity() {
 }
 
 @Composable
-private fun FullscreenCamPreview(
+fun FullscreenCamPreview(
     rtc: RtcCallManager,
     onConfirm: () -> Unit,
     onClose: () -> Unit
