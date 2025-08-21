@@ -4,6 +4,8 @@ package com.app.mdlbapp.rtc
 import android.content.Context
 import android.content.Context.AUDIO_SERVICE
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import com.app.mdlbapp.data.call.CallRepository
 import com.app.mdlbapp.data.call.CallRepository.getOrCreateRtcKeyB64
 import com.app.mdlbapp.data.call.IceBlob
@@ -15,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import org.webrtc.*
+import org.webrtc.audio.JavaAudioDeviceModule
 import kotlin.getValue
 
 
@@ -46,46 +49,79 @@ class RtcCallManager(
         if (mediaAttached) return
         mediaAttached = true
 
-        // — АУДИО —
+        // ===== АУДИО =====
+        // ВАЖНО: добавляем с streamId → корректный msid/ssrc в SDP
         try {
-            // Явно создаём трансивер с направлением SEND_RECV (чтобы м-линия точно была)
-            audioTransceiver = pc.addTransceiver(
-                audioTrack,
-                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
-            )
+            audioSender = pc.addTrack(audioTrack, listOf("ARDAMS"))
+            audioTransceiver = findTransceiverFor(audioSender)
         } catch (_: Throwable) {
-            // запасной путь — старый addTrack
-            try { pc.addTrack(audioTrack) } catch (_: Exception) {}
+            // совсем старые билды: на крайний случай — через transceiver без streamId
+            try {
+                audioTransceiver = pc.addTransceiver(
+                    audioTrack,
+                    RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
+                )
+                audioSender = audioTransceiver?.sender
+            } catch (_: Exception) { }
         }
 
-        // — ВИДЕО —
+        // ===== ВИДЕО =====
         try {
-            // То же самое для видео — и берём sender из трансивера
-            videoTransceiver = pc.addTransceiver(
-                videoTrack,
-                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
-            )
-            videoSender = videoTransceiver?.sender
+            videoSender = pc.addTrack(videoTrack, listOf("ARDAMS"))
+            videoTransceiver = findTransceiverFor(videoSender)
         } catch (_: Throwable) {
-            // если в твоей сборке нет addTransceiver(track, init) — падаем на проверенный addTrack
-            try { videoSender = pc.addTrack(videoTrack) } catch (_: Exception) {}
+            try {
+                videoTransceiver = pc.addTransceiver(
+                    videoTrack,
+                    RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
+                )
+                videoSender = videoTransceiver?.sender
+            } catch (_: Exception) { }
         }
 
-        // Стартуем отправку правильно (без отцепления трека)
+        // На всякий — явно держим SEND_RECV на обоих
+        try {
+            audioTransceiver?.direction = RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+            videoTransceiver?.direction = RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+        } catch (_: Throwable) {}
+
+        // Локальные превью уже подключены в startLocalVideo()
+
+        // Важный момент: отправку видео контролируем ТОЛЬКО через sender.setTrack/null
         setVideoActiveInternal(sendVideoInitially)
-        android.util.Log.d("CALL", "video sending = $sendVideoInitially (via encodings.active/fallback)")
+
+        dumpDirections("attachMedia")
+
+        android.util.Log.d("CALL", "video sending = $sendVideoInitially (encodings/replaceTrack)")
     }
 
+    private fun dumpDirections(tag: String) {
+        try {
+            val aDir = audioTransceiver?.direction?.name ?: "null"
+            val vDir = videoTransceiver?.direction?.name ?: "null"
+            val vHasTrack = (videoSender?.track() != null)
+            val aHasTrack = (audioSender?.track() != null)
+            android.util.Log.d("CALL", "[$tag] A=$aDir hasTrack=$aHasTrack; V=$vDir hasTrack=$vHasTrack")
+        } catch (_: Throwable) {}
+    }
 
     private val egl = EglBase.create()
     private val factory: PeerConnectionFactory by lazy {
-        ensureInit(ctx) // <<< ВАЖНО: инициализируем один раз на процесс
+        ensureInit(ctx)
         val enc = DefaultVideoEncoderFactory(egl.eglBaseContext, true, true)
         val dec = DefaultVideoDecoderFactory(egl.eglBaseContext)
         PeerConnectionFactory.builder()
+            .setAudioDeviceModule(adm)
             .setVideoEncoderFactory(enc)
             .setVideoDecoderFactory(dec)
             .createPeerConnectionFactory()
+    }
+
+    private val adm: JavaAudioDeviceModule by lazy {
+        JavaAudioDeviceModule.builder(ctx)
+            .setUseHardwareAcousticEchoCanceler(true)
+            .setUseHardwareNoiseSuppressor(true)
+            .createAudioDeviceModule()
     }
 
     private val audioSource = factory.createAudioSource(MediaConstraints())
@@ -117,14 +153,16 @@ class RtcCallManager(
         setZOrderMediaOverlay(false)
     }
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val _remoteHasVideo = kotlinx.coroutines.flow.MutableStateFlow(false)
     val remoteHasVideo: kotlinx.coroutines.flow.StateFlow<Boolean> get() = _remoteHasVideo
     private inner class FirstFrameSink : VideoSink {
-        private var fired = false
+        @Volatile private var fired = false
         override fun onFrame(frame: VideoFrame) {
             if (!fired) {
                 fired = true
-                _remoteHasVideo.value = true   // ← именно здесь, на первом кадре
+                // Флажочек поднимаем на главном потоке → Compose точно увидит
+                mainHandler.post { _remoteHasVideo.value = true }
             }
         }
     }
@@ -134,26 +172,20 @@ class RtcCallManager(
             listOf(
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
                 PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-
-//                // 👇 добавь свой TURN:
-//                PeerConnection.IceServer.builder("turn:YOUR_TURN_HOST:3478")
-//                    .setUsername("YOUR_USER")
-//                    .setPassword("YOUR_PASS")
-//                    .createIceServer()
-
-                // — публичный TURN OpenRelay (UDP через 80) —
                 PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80?transport=udp")
                     .setUsername("openrelayproject")
                     .setPassword("openrelayproject")
                     .createIceServer(),
-
-                // — тот же TURN по TCP через 443 (на случай злых сетей) —
                 PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
                     .setUsername("openrelayproject")
                     .setPassword("openrelayproject")
                     .createIceServer()
             )
-        ),
+        ).apply {
+            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+        },
         object : PeerConnection.Observer {
             override fun onIceCandidate(c: IceCandidate) {
                 currentCallId?.let { cid ->
@@ -173,15 +205,22 @@ class RtcCallManager(
 
             // — показываем мамочку в удалённом окне —
             override fun onTrack(t: RtpTransceiver) {
-                (t.receiver.track() as? VideoTrack)?.let { vt ->
-                    vt.addSink(remoteView)
-                    vt.addSink(firstFrameSink)   // ← добавили «слушателя кадра»
-                }
-            }
-            override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
-                (receiver.track() as? VideoTrack)?.let { vt ->
+                val track = t.receiver.track()
+                android.util.Log.d("CALL", "onTrack: kind=${track?.kind()}")
+                (track as? VideoTrack)?.let { vt ->
                     vt.addSink(remoteView)
                     vt.addSink(firstFrameSink)
+                    android.util.Log.d("CALL", "remote video track attached; waiting first frame…")
+                }
+            }
+
+            override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
+                val track = receiver.track()
+                android.util.Log.d("CALL", "onAddTrack: kind=${track?.kind()}")
+                (track as? VideoTrack)?.let { vt ->
+                    vt.addSink(remoteView)
+                    vt.addSink(firstFrameSink)
+                    android.util.Log.d("CALL", "remote video track attached (legacy); waiting first frame…")
                 }
             }
 
@@ -218,9 +257,9 @@ class RtcCallManager(
 
     // ✅ Новая функция — включать/выключать ТОЛЬКО отправку (не влияем на превью)
     fun setVideoSending(enabled: Boolean) {
+        android.util.Log.d("CALL", "setVideoSending($enabled) — begin")
         setVideoActiveInternal(enabled)
-        android.util.Log.d("CALL", "video sending = $enabled (encodings.active or setTrack fallback)")
-        android.util.Log.d("CALL", "setVideoSending=$enabled")
+        android.util.Log.d("CALL", "setVideoSending($enabled) — end")
     }
 
 
@@ -277,25 +316,41 @@ class RtcCallManager(
 
 
 
+    // RtcCallManager.kt
     private fun setVideoActiveInternal(active: Boolean) {
         val s = videoSender ?: return
-        // Сначала пробуем «правильный» способ — через encodings.active
-        kotlin.runCatching {
-            val p = s.parameters
-            if (p.encodings.isNotEmpty()) {
-                val e = p.encodings[0]
-                if (e.active != active) {
-                    e.active = active
-                    s.parameters = p
-                }
-                return
+
+        // 1) НАДЁЖНЫЙ способ: replaceTrack (sender.setTrack)
+        val replaced = runCatching {
+            if (active) {
+                if (s.track() != videoTrack) s.setTrack(videoTrack, /*takeOwnership=*/false)
+            } else {
+                if (s.track() != null) s.setTrack(null, /*takeOwnership=*/false)
             }
-            // Если encodings пуст — используем надёжный fallback
-            if (active) s.setTrack(videoTrack, false) else s.setTrack(null, false)
-        }.onFailure {
-            // Ещё один страховочный маршрут
-            try { if (active) s.setTrack(videoTrack, false) else s.setTrack(null, false) } catch (_: Exception) {}
+            true
+        }.getOrElse { false }
+
+        if (replaced) {
+            android.util.Log.d("CALL", "video TX ${if (active) "ON" else "OFF"}; via sender.setTrack")
+            return
         }
+
+        // 2) Запасной путь: encodings.active
+        runCatching {
+            val params = s.parameters
+            if (params.encodings.isNotEmpty()) {
+                var changed = false
+                params.encodings.forEach { enc ->
+                    if (enc.active != active) { enc.active = active; changed = true }
+                }
+                if (changed) s.parameters = params
+            }
+        }.onSuccess {
+            android.util.Log.d("CALL", "video TX ${if (active) "ON" else "OFF"}; via encodings.active")
+        }.onFailure {
+            android.util.Log.w("CALL", "video TX toggle failed: ${it.message}")
+        }
+        dumpDirections("setVideoActiveInternal")
     }
 
     fun acceptOffer(callId: String, offer: SdpBlob, sendVideo: Boolean) {
@@ -414,6 +469,7 @@ class RtcCallManager(
         try { localPipView.release() } catch (_: Exception) {}
         try { remoteView.release() } catch (_: Exception) {}
         try { egl.release() } catch (_: Exception) {}
+        try { adm.release() } catch (_: Exception) {}
     }
 
     private fun sdpStub() = object : SdpObserver {
@@ -436,6 +492,10 @@ class RtcCallManager(
     private var videoTransceiver: RtpTransceiver? = null
     private var audioTransceiver: RtpTransceiver? = null
 
-
-
+    private var audioSender: RtpSender? = null
+    // videoSender уже есть
+    private fun findTransceiverFor(sender: RtpSender?): RtpTransceiver? {
+        if (sender == null) return null
+        return pc.transceivers.firstOrNull { it.sender.id() == sender.id() }
+    }
 }

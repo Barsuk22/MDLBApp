@@ -273,9 +273,15 @@ class IncomingCallActivity : ComponentActivity() {
                         micOn = micOn, camOn = camOn, spkOn = spkOn,
                         onToggleMic = { micOn = !micOn },
                         onToggleCam = {
-                            if (sendVideo) { rtc?.setVideoSending(false); sendVideo = false; camOn = false }
-                            else if (rtc != null) showCamPreview = true
-                            else toast("Пока нельзя — идёт соединение")
+                            if (sendVideo) {
+                                rtc?.setVideoSending(false)  // ❗ выключаем отправку
+                                sendVideo = false
+                                camOn = false
+                            } else if (rtc != null) {
+                                showCamPreview = true        // ❗ сначала предпросмотр
+                            } else {
+                                toast("Пока нельзя — идёт соединение")
+                            }
                         },
                         onToggleSpk = { spkOn = !spkOn },
                         onAccept = acceptCall,

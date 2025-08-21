@@ -215,9 +215,10 @@ class OutgoingCallActivity : ComponentActivity() {
                         onToggleCam = {
                             if (sendVideo) {
                                 sendVideo = false
-                                rtc?.setVideoSending(false)
+                                rtc?.setVideoSending(false)  // ❗ выключаем отправку
+                                camOn = false
                             } else {
-                                showCamPreview = true
+                                showCamPreview = true        // ❗ сначала предпросмотр
                             }
                         },
                         onToggleSpk = { spkOn = !spkOn },

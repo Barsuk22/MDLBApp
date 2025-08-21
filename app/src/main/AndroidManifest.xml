@@ -85,6 +85,8 @@
             android:exported="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:launchMode="singleTask"
             android:taskAffinity=""
             android:theme="@style/Theme.MDLBApp.NoActionBar">
@@ -102,6 +104,8 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:excludeFromRecents="true"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:launchMode="singleTop"
             android:theme="@style/Theme.MDLBApp.NoActionBar" />
 
