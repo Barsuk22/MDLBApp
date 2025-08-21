@@ -47,7 +47,9 @@ import kotlinx.coroutines.tasks.await
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ktx.firestore
 import com.app.mdlbapp.data.call.CallRepository
+import com.app.mdlbapp.data.call.CallRuntime
 import com.app.mdlbapp.data.call.CallSounds
+import com.app.mdlbapp.rtc.RtcCallManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,7 +88,6 @@ class IncomingCallActivity : ComponentActivity() {
                 var spkOn by remember { mutableStateOf(true) }
                 var sendVideo by remember { mutableStateOf(false) }
 
-
                 var callStartAt by remember { mutableStateOf<Long?>(null) }
                 var durationText by remember { mutableStateOf("00:00") }
                 // --- предпросмотр камеры ---
@@ -94,21 +95,13 @@ class IncomingCallActivity : ComponentActivity() {
 
                 val scope = rememberCoroutineScope()
 
-                LaunchedEffect(callStartAt) {
-                    if (callStartAt != null) {
-                        while (true) {
-                            val sec = ((SystemClock.elapsedRealtime() - callStartAt!!) / 1000).toInt()
-                            val mm = sec / 60; val ss = sec % 60
-                            durationText = "%02d:%02d".format(mm, ss)
-                            delay(1000)
-                        }
-                    }
-                }
+
 
                 // когда реально подключились
                 LaunchedEffect(phase) {
-                    if (phase == CallPhase.Connected) {
-                        callStartAt = SystemClock.elapsedRealtime()
+                    if (phase == CallPhase.Connected && callStartAt == null) {
+                        callStartAt = com.app.mdlbapp.data.call.CallRuntime.callStartedAtUptimeMs
+                            ?: android.os.SystemClock.elapsedRealtime()
                     }
                 }
 
@@ -123,6 +116,7 @@ class IncomingCallActivity : ComponentActivity() {
                 val showVideoLayer = rtc != null && !showCamPreview && remoteHas
                 val showHeader     = !showVideoLayer
 
+
                 // --- длительность ---
                 LaunchedEffect(callStartAt) {
                     if (callStartAt != null) {
@@ -132,13 +126,6 @@ class IncomingCallActivity : ComponentActivity() {
                             durationText = "%02d:%02d".format(mm, ss)
                             delay(1000)
                         }
-                    }
-                }
-
-                DisposableEffect(Unit) {
-                    onDispose {
-                        rtc?.endCall()
-                        rtc = null
                     }
                 }
 
@@ -171,6 +158,15 @@ class IncomingCallActivity : ComponentActivity() {
                     onDispose { reg?.remove() }
                 }
 
+                val resumeFromNotif = intent.getBooleanExtra("resume", false)
+                LaunchedEffect(resumeFromNotif) {
+                    if (resumeFromNotif && com.app.mdlbapp.data.call.CallRuntime.rtc != null) {
+                        rtc = com.app.mdlbapp.data.call.CallRuntime.rtc
+                        phase = CallPhase.Connected
+                        callStartAt = com.app.mdlbapp.data.call.CallRuntime.callStartedAtUptimeMs
+                    }
+                }
+
                     // 1) Лямбда принятия – ВНЕ экрана, чтобы была видна и LaunchedEffect, и экрану:
                     val acceptCall: () -> Unit = {
                         val act = this@IncomingCallActivity
@@ -201,8 +197,20 @@ class IncomingCallActivity : ComponentActivity() {
                             // 3) создаём RTC (в state, не локально!)
                             currentTid = tid
                             currentCallId = callId
-                            rtc = com.app.mdlbapp.rtc.RtcCallManager(act, tid, me, from)
+                            rtc = RtcCallManager(applicationContext, tid, me, from).also { mgr ->
+                                mgr.onFatalDisconnect = {
+                                    lifecycleScope.launch {
+                                        // пометим звонок завершённым (если ещё не)
+                                        runCatching { CallRepository.setState(tid, callId, "ended") }
+                                        CallSounds.playHangupBeep(this)
+                                        mgr.endCall()
+                                        finish()  // или finishAndRemoveTask() на 21+
+                                    }
+                                }
+                            }
+
                             val rtcNow = rtc!!
+
 
                             withContext(kotlinx.coroutines.Dispatchers.Main) {
                                 runCatching { rtcNow.startLocalVideo() }
@@ -247,9 +255,33 @@ class IncomingCallActivity : ComponentActivity() {
 //                            launch { rtcNow.setVideoEnabled(camOn) }
                             launch { rtcNow.setSpeakerphone(spkOn) }
 
-
+                            startService(
+                                Intent(this@IncomingCallActivity, com.app.mdlbapp.data.call.CallOngoingService::class.java)
+                                    .setAction(com.app.mdlbapp.data.call.CallOngoingService.ACTION_START)
+                                    .putExtra(com.app.mdlbapp.data.call.CallOngoingService.EXTRA_TID, tid)
+                                    .putExtra(com.app.mdlbapp.data.call.CallOngoingService.EXTRA_PEER_UID, from)
+                                    .putExtra(com.app.mdlbapp.data.call.CallOngoingService.EXTRA_PEER_NAME, name)
+                                    .putExtra(com.app.mdlbapp.data.call.CallOngoingService.EXTRA_CALL_ID, callId)
+                                    .putExtra(com.app.mdlbapp.data.call.CallOngoingService.EXTRA_AS_CALLER, false)
+                            )
+                            startService(
+                                Intent(this@IncomingCallActivity, com.app.mdlbapp.data.call.CallOngoingService::class.java)
+                                    .setAction(com.app.mdlbapp.data.call.CallOngoingService.ACTION_CONNECTED)
+                            )
+                            com.app.mdlbapp.data.call.CallRuntime.rtc = rtc
+                            com.app.mdlbapp.data.call.CallRuntime.tid = tid
+                            com.app.mdlbapp.data.call.CallRuntime.callId = callId
+                            com.app.mdlbapp.data.call.CallRuntime.peerUid = from
+                            com.app.mdlbapp.data.call.CallRuntime.peerName = name
                         }
+                        phase = if (CallRuntime.connected.value) CallPhase.Connected else CallPhase.Connecting
                     }
+
+                LaunchedEffect(Unit) {
+                    if (callStartAt == null && CallRuntime.connected.value) {
+                        callStartAt = CallRuntime.callStartedAtUptimeMs ?: SystemClock.elapsedRealtime()
+                    }
+                }
 
                 val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
                 Box(Modifier.fillMaxSize()) {

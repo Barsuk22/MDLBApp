@@ -87,6 +87,7 @@
     import kotlinx.coroutines.tasks.await
 
     const val CALLS_CH_ID = "calls_incoming_v4"
+
     class MainActivity : ComponentActivity() {
         private fun registerFcmTokenForCurrentUser() {
             val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
@@ -576,10 +577,14 @@
                                     val asCaller = if (intent.getBooleanExtra("asCaller", false)) "1" else "0"
                                     val auto = if (intent.getBooleanExtra("autoJoin", false)) "1" else "0"
                                     if (!tid.isNullOrBlank()) {
-                                        navController.navigate("call/$tid/$asCaller?auto=$auto")
+                                        intent?.takeIf { it.getBooleanExtra("openCallFromNotif", false) }?.let {
+                                            val tid = it.getStringExtra("tid") ?: return@let
+                                            navController.navigate("call/$tid/$asCaller?auto=$auto")
+                                        }
                                     }
                                 }
                             }
+
                             var showWatcher by remember { mutableStateOf(false) }
                             LaunchedEffect(Unit) {
                                 val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect

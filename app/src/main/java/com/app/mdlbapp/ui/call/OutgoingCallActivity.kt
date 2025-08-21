@@ -1,6 +1,7 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 package com.app.mdlbapp.ui.call
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -36,6 +37,8 @@ import androidx.compose.ui.draw.clip
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.app.mdlbapp.data.call.CallOngoingService
+import com.app.mdlbapp.data.call.CallRuntime
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.webrtc.MediaConstraints
 import org.webrtc.SdpObserver
@@ -61,23 +64,41 @@ class OutgoingCallActivity : ComponentActivity() {
         val initialName   = intent.getStringExtra("peerName") ?: "Малыш"
         val initialAvatar = intent.getStringExtra("peerAvatar")
 
+        val resumeFromNotif = intent.getBooleanExtra("resume", false)
+        val runtimeRtc = com.app.mdlbapp.data.call.CallRuntime.rtc
+        val runtimeCallId = com.app.mdlbapp.data.call.CallRuntime.callId
 
         setContent {
             MaterialTheme {
                 var name by remember { mutableStateOf(initialName) }
                 var avatar by remember { mutableStateOf(initialAvatar) }
 
-
-
                 // состояния
-                var phase by remember { mutableStateOf(OutPhase.Request) }
+                var phase by remember {
+                    mutableStateOf(
+                        when {
+                            resumeFromNotif && CallRuntime.connected.value -> OutPhase.Connected
+                            resumeFromNotif && runtimeRtc != null          -> OutPhase.Waiting // сразу «Ждём ответа…»
+                            else                                           -> OutPhase.Request
+                        }
+                    )
+                }
+
+
+
                 var micOn by remember { mutableStateOf(true) }
                 var camOn by remember { mutableStateOf(false) }   // 👈 стартуем без трансляции
                 var spkOn by remember { mutableStateOf(true) }
 
-                var rtc by remember { mutableStateOf<RtcCallManager?>(null) }
-                var callId by remember { mutableStateOf<String?>(null) }
+                var rtc by remember {
+                    mutableStateOf<RtcCallManager?>(
+                        if (resumeFromNotif && runtimeRtc != null) runtimeRtc else null
+                    )
+                }
+                var callId by remember { mutableStateOf<String?>(runtimeCallId) }
+
                 val me = FirebaseAuth.getInstance().currentUser?.uid
+
 
 
 
@@ -88,8 +109,27 @@ class OutgoingCallActivity : ComponentActivity() {
                 var showCamPreview by remember { mutableStateOf(false) }
 
                 // --- длительность ---
-                var callStartAt by remember { mutableStateOf<Long?>(null) }
+                var callStartAt by remember { mutableStateOf<Long?>(CallRuntime.callStartedAtUptimeMs) }
                 var durationText by remember { mutableStateOf("00:00") }
+
+                LaunchedEffect(resumeFromNotif) {
+                    if (resumeFromNotif && CallRuntime.connected.value) {
+                        phase = OutPhase.Connected
+                        if (callStartAt == null) {
+                            callStartAt = CallRuntime.callStartedAtUptimeMs ?: SystemClock.elapsedRealtime()
+                        }
+                    }
+                }
+
+                val isConnected by CallRuntime.connected.collectAsState()
+                LaunchedEffect(isConnected) {
+                    if (isConnected) {
+                        phase = OutPhase.Connected
+                        if (callStartAt == null) {
+                            callStartAt = CallRuntime.callStartedAtUptimeMs ?: SystemClock.elapsedRealtime()
+                        }
+                    }
+                }
 
                 val remoteHas by remember(rtc) { rtc?.remoteHasVideo ?: MutableStateFlow(false) }
                     .collectAsState(initial = false)
@@ -120,10 +160,7 @@ class OutgoingCallActivity : ComponentActivity() {
                     onDispose { reg.remove() }
                 }
 
-                // при выходе — аккуратно завершаем
-                DisposableEffect(Unit) {
-                    onDispose { rtc?.endCall(); rtc = null }
-                }
+
 
 
                 // Привязки тумблеров
@@ -137,20 +174,40 @@ class OutgoingCallActivity : ComponentActivity() {
                 fun toast(s: String) = android.widget.Toast.makeText(act, s, android.widget.Toast.LENGTH_SHORT).show()
 
                 // старт звонка
-                LaunchedEffect(tid, peerUid) {
+                var serviceStarted by remember { mutableStateOf(false) }
+                var sentConnected by remember { mutableStateOf(false) }
+                LaunchedEffect(tid, peerUid, resumeFromNotif) {
+                    if (resumeFromNotif && runtimeRtc != null) {
+                        // ничего нового не создаём
+                        return@LaunchedEffect
+                    }
+
                     if (me == null) { toast("Нет пользователя"); finish(); return@LaunchedEffect }
+
+
                     try {
                         phase = OutPhase.Request
-                        rtc = RtcCallManager(act, tid, me, peerUid)
+                        rtc = RtcCallManager(applicationContext, tid, me, peerUid)
                         rtc!!.startLocalVideo()
                         phase = OutPhase.Calling
-
                         // гудки пошли
                         CallSounds.startRingback()
 
                         rtc!!.makeOffer(sendVideo = false) { cid ->
                             callId = cid
                             phase = OutPhase.Waiting
+
+
+                            startService(
+                                Intent(this@OutgoingCallActivity, CallOngoingService::class.java)
+                                    .setAction(CallOngoingService.ACTION_START)
+                                    .putExtra(CallOngoingService.EXTRA_TID, tid)
+                                    .putExtra(CallOngoingService.EXTRA_PEER_UID, peerUid)
+                                    .putExtra(CallOngoingService.EXTRA_PEER_NAME, name)
+                                    .putExtra(CallOngoingService.EXTRA_CALL_ID, cid)
+                                    .putExtra(CallOngoingService.EXTRA_AS_CALLER, true)
+                            )
+                            serviceStarted = true
 
 
                             // ждём answer / завершаем по ended
@@ -172,6 +229,18 @@ class OutgoingCallActivity : ComponentActivity() {
                                             callStartAt = SystemClock.elapsedRealtime()
                                         }
                                     }
+                                    if (!sentConnected && (c?.answer != null || c?.state == "connected")) {
+                                        startService(
+                                            Intent(this@OutgoingCallActivity, CallOngoingService::class.java)
+                                                .setAction(CallOngoingService.ACTION_CONNECTED)
+                                        )
+                                        sentConnected = true
+                                    }
+                                    CallRuntime.rtc = rtc
+                                    CallRuntime.tid = tid
+                                    CallRuntime.callId = callId
+                                    CallRuntime.peerUid = peerUid
+                                    CallRuntime.peerName = name
                                 }
                             }
                         }
@@ -181,13 +250,45 @@ class OutgoingCallActivity : ComponentActivity() {
                         finish()
                     }
                 }
+                // при выходе — аккуратно завершаем
+                DisposableEffect(Unit) {
+                    onDispose {
+                        // Если сервис не запущен — мы хозяйничаем и должны прибрать за собой
+                        if (!serviceStarted) {
+                            rtc?.endCall()
+                            rtc = null
+                        }
+                        // если сервис запущен — звонок остаётся жить в фоне, ничего не трогаем
+                    }
+                }
+
+                LaunchedEffect(resumeFromNotif, runtimeCallId) {
+                    if (resumeFromNotif && runtimeRtc != null && runtimeCallId != null) {
+                        val me = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+                        val key = CallRepository.getOrCreateRtcKeyB64(tid, me, peerUid)
+
+                        CallRepository.watchCallDecrypted(tid, runtimeCallId, key).collect { c ->
+                            phase = when {
+                                c?.state == "ended"           -> OutPhase.Request      // сервис всё равно завершит
+                                c?.answer == null             -> OutPhase.Waiting
+                                !CallRuntime.connected.value  -> OutPhase.ExchangingKeys
+                                else                          -> OutPhase.Connected
+                            }
+                        }
+                    }
+                }
+
+
 
                 // Завершение любым способом
                 fun hangup() {
                     scope.launch {
                         callId?.let { runCatching { CallRepository.setState(tid, it, "ended") } }
                         CallSounds.playHangupBeep(this)
-                        rtc?.endCall()
+                        startService(
+                            Intent(this@OutgoingCallActivity, com.app.mdlbapp.data.call.CallOngoingService::class.java)
+                                .setAction(com.app.mdlbapp.data.call.CallOngoingService.ACTION_HANGUP)
+                        )
                         finish()
                     }
                 }
@@ -196,6 +297,8 @@ class OutgoingCallActivity : ComponentActivity() {
                     // 🟢 1) Логика показа слоёв
                     val showRemote = rtc != null && !showCamPreview && remoteHas
                     val showSelfPip = rtc != null && !showCamPreview && sendVideo
+
+                    val showHeader = !showRemote && phase != OutPhase.Request
 
                     // 🟢 2) Большой удалённый слой — ТОЛЬКО когда пришёл первый кадр
                     if (showRemote) {
@@ -225,7 +328,7 @@ class OutgoingCallActivity : ComponentActivity() {
                         onHangup = { hangup() },
                         showControls = !showCamPreview,
                         drawBg = !showRemote,     // << фон зелёный, пока нет удалённого видео
-                        showHeader = !showRemote  // << заголовок виден, пока нет удалённого видео
+                        showHeader = showHeader  // << заголовок виден, пока нет удалённого видео
                     )
 
                     // 🟢 4) Маленькое «пип»-окошко со СВОЕЙ камерой — отдельно
@@ -261,8 +364,14 @@ class OutgoingCallActivity : ComponentActivity() {
             }
         }
     }
-
-
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // если активити уже открыта и прилетел повторный тап по уведомлению — ведём себя как resume
+        if (intent.getBooleanExtra("resume", false)) {
+            // ничего не делаем – UI уже привязан к CallRuntime.rtc
+        }
+    }
 }
 
 @Composable

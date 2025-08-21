@@ -3,7 +3,9 @@ package com.app.mdlbapp.rtc
 
 import android.content.Context
 import android.content.Context.AUDIO_SERVICE
+import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import com.app.mdlbapp.data.call.CallRepository
@@ -28,6 +30,47 @@ class RtcCallManager(
     private val peerUid: String,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main)
 ) {
+    val pcState = kotlinx.coroutines.flow.MutableStateFlow(PeerConnection.PeerConnectionState.NEW)
+    val iceState = kotlinx.coroutines.flow.MutableStateFlow(PeerConnection.IceConnectionState.NEW)
+    var onFatalDisconnect: (() -> Unit)? = null
+
+    // аудиофокус
+    private var audioFocus: Int = AudioManager.AUDIOFOCUS_LOSS
+    private var focusRequest: AudioFocusRequest? = null
+
+    private fun enterCallAudioMode() {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (Build.VERSION.SDK_INT >= 26) {
+            focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                .setOnAudioFocusChangeListener { /* ignore */ }
+                .setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .build()
+            audioFocus = am.requestAudioFocus(focusRequest!!)
+        } else {
+            audioFocus = am.requestAudioFocus(null,
+                AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        }
+        am.mode = AudioManager.MODE_IN_COMMUNICATION
+        // спикер держим как раньше через setSpeakerphone(), тут не трогаем
+    }
+
+    private fun leaveCallAudioMode() {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        try {
+            if (Build.VERSION.SDK_INT >= 26) focusRequest?.let { am.abandonAudioFocusRequest(it) }
+            else am.abandonAudioFocus(null)
+        } catch (_: Throwable) {}
+        am.mode = AudioManager.MODE_NORMAL
+        am.isSpeakerphoneOn = false
+        focusRequest = null
+        audioFocus = AudioManager.AUDIOFOCUS_LOSS
+    }
+
     companion object {
         @Volatile private var inited = false
         private fun ensureInit(ctx: Context) {
@@ -230,12 +273,42 @@ class RtcCallManager(
             override fun onDataChannel(dc: DataChannel) {}
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) {}
             override fun onSignalingChange(state: PeerConnection.SignalingState) {}
-            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
-            override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {}
             override fun onIceConnectionReceivingChange(receiving: Boolean) { /* no-op */ }
 
             override fun onRenegotiationNeeded() {}
+
+            override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
+                pcState.value = state
+                when (state) {
+                    PeerConnection.PeerConnectionState.CONNECTED -> {
+                        // in-call аудио как только реально соединились
+                        enterCallAudioMode()
+                    }
+                    PeerConnection.PeerConnectionState.CLOSED,
+                    PeerConnection.PeerConnectionState.FAILED -> {
+                        onFatalDisconnect?.invoke()
+                    }
+                    else -> {}
+                }
+            }
+
+            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+                iceState.value = state
+                when (state) {
+                    PeerConnection.IceConnectionState.FAILED,
+                    PeerConnection.IceConnectionState.CLOSED -> onFatalDisconnect?.invoke()
+                    PeerConnection.IceConnectionState.DISCONNECTED -> {
+                        // небольшой grace-period: если за 10с не вернулись — падаем
+                        mainHandler.postDelayed({
+                            if (iceState.value == PeerConnection.IceConnectionState.DISCONNECTED) {
+                                onFatalDisconnect?.invoke()
+                            }
+                        }, 10_000)
+                    }
+                    else -> {}
+                }
+            }
         }
     )!!
 
@@ -410,6 +483,7 @@ class RtcCallManager(
                     override fun onSetSuccess() {}
                     override fun onSetFailure(p0: String?) {}
                 }, answerConstraints)
+                enterCallAudioMode()
             }
 
             override fun onSetFailure(err: String?) {
@@ -426,8 +500,12 @@ class RtcCallManager(
 
 
 
+    // когда я — зовущий
     fun setRemoteAnswer(answer: SdpBlob) {
-        pc.setRemoteDescription(sdpStub(), SessionDescription(SessionDescription.Type.ANSWER, answer.sdp))
+        pc.setRemoteDescription(sdpStub(),
+            SessionDescription(SessionDescription.Type.ANSWER, answer.sdp))
+        // заранее включим аудио-режим — соединение вот-вот будет
+        enterCallAudioMode()
     }
 
     private fun listenRemoteIce(callId: String) {
@@ -453,6 +531,7 @@ class RtcCallManager(
     fun endCall() {
         if (closed) return
         closed = true
+        leaveCallAudioMode()
         try {
             (ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager).apply {
                 mode = android.media.AudioManager.MODE_NORMAL
