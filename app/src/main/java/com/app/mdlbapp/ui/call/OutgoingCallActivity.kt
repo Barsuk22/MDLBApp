@@ -193,6 +193,8 @@ class OutgoingCallActivity : ComponentActivity() {
                         // гудки пошли
                         CallSounds.startRingback()
 
+                        callStartAt = null
+                        CallRuntime.callStartedAtUptimeMs = null
                         rtc!!.makeOffer(sendVideo = false) { cid ->
                             callId = cid
                             phase = OutPhase.Waiting

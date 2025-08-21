@@ -58,28 +58,34 @@ class CallOngoingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                val oldTid = CallRuntime.tid
+                val oldCid = CallRuntime.callId
+
                 intent.getStringExtra(EXTRA_TID)?.let { CallRuntime.tid = it }
                 intent.getStringExtra(EXTRA_PEER_UID)?.let { CallRuntime.peerUid = it }
                 intent.getStringExtra(EXTRA_PEER_NAME)?.let { CallRuntime.peerName = it }
                 intent.getStringExtra(EXTRA_CALL_ID)?.let { CallRuntime.callId = it }
-                // запускаем как foreground
-                startForegroundCompat(buildNotification())
-
                 CallRuntime.asCaller = intent.getBooleanExtra(EXTRA_AS_CALLER, CallRuntime.asCaller ?: false)
-            }
-            ACTION_CONNECTED -> {
-                if (CallRuntime.callStartedAtUptimeMs == null) {
-                    CallRuntime.callStartedAtUptimeMs = android.os.SystemClock.elapsedRealtime()
-                    CallRuntime.connected.value = true
+
+                // 🔁 Новый звонок? — сбросить таймер/флаги
+                val isNewCall = (oldTid != CallRuntime.tid) || (oldCid != CallRuntime.callId)
+                if (isNewCall) {
+                    CallRuntime.callStartedAtUptimeMs = null
+                    CallRuntime.connected.value = false
                 }
+
+                startForegroundCompat(buildNotification())
+            }
+
+            ACTION_CONNECTED -> {
                 if (CallRuntime.callStartedAtUptimeMs == null) {
                     CallRuntime.callStartedAtUptimeMs = android.os.SystemClock.elapsedRealtime()
                 }
                 CallRuntime.connected.value = true
                 updateNotification()
             }
+
             ACTION_HANGUP -> {
-                // ✅ В КОРУТИНЕ:
                 serviceScope.launch {
                     runCatching {
                         val t = CallRuntime.tid
@@ -92,14 +98,24 @@ class CallOngoingService : Service() {
                         runCatching { CallRuntime.rtc?.endCall() }
                         CallRuntime.rtc = null
                         CallRuntime.connected.value = false
+                        // 🧹 Полный сброс
+                        CallRuntime.callStartedAtUptimeMs = null
+                        CallRuntime.tid = null
+                        CallRuntime.callId = null
+                        CallRuntime.peerUid = null
+                        CallRuntime.peerName = null
+                        CallRuntime.asCaller = null
+
                         stopForeground(true)
                         stopSelf()
                     }
                 }
             }
         }
-        return START_STICKY
+        // ⛔️ не даём сервису оживать с “прошлым состоянием”
+        return START_NOT_STICKY
     }
+
 
     private fun startForegroundCompat(n: Notification) {
         try {

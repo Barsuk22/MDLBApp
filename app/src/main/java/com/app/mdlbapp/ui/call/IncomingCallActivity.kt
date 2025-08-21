@@ -169,6 +169,9 @@ class IncomingCallActivity : ComponentActivity() {
 
                     // 1) Лямбда принятия – ВНЕ экрана, чтобы была видна и LaunchedEffect, и экрану:
                     val acceptCall: () -> Unit = {
+                        callStartAt = null
+                        CallRuntime.callStartedAtUptimeMs = null
+
                         val act = this@IncomingCallActivity
                         act.lifecycleScope.launch {
                             val me = FirebaseAuth.getInstance().currentUser?.uid

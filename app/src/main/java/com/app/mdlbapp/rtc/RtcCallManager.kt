@@ -483,7 +483,6 @@ class RtcCallManager(
                     override fun onSetSuccess() {}
                     override fun onSetFailure(p0: String?) {}
                 }, answerConstraints)
-                enterCallAudioMode()
             }
 
             override fun onSetFailure(err: String?) {
@@ -505,7 +504,6 @@ class RtcCallManager(
         pc.setRemoteDescription(sdpStub(),
             SessionDescription(SessionDescription.Type.ANSWER, answer.sdp))
         // заранее включим аудио-режим — соединение вот-вот будет
-        enterCallAudioMode()
     }
 
     private fun listenRemoteIce(callId: String) {
