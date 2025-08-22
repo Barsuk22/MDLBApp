@@ -173,3 +173,30 @@ exports.notifyOnCallCreate = functions.firestore
     }
     return null;
   });
+
+  exports.notifyOnCallEndQuick = functions.firestore
+    .document('chats/{tid}/calls/{cid}')
+    .onUpdate(async (change) => {
+      const before = change.before.data();
+      const after  = change.after.data();
+      if (!before || !after) return null;
+
+      // интересует только переход ringing -> ended (без connected/answer)
+      const endedQuickly = (before.state === 'ringing') &&
+                           (after.state === 'ended') &&
+                           !after.answer && !after.answerEnc;
+
+      if (!endedQuickly) return null;
+
+      const calleeUid = after.calleeUid;
+      const userDoc = await db.collection('users').doc(calleeUid).get();
+      const tokens  = userDoc.get('fcmTokens') || [];
+      if (!tokens.length) return null;
+
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        data: { type: 'call_cancel', fromUid: after.callerUid },
+        android: { priority: 'HIGH', ttl: '0s' }
+      });
+      return null;
+    });

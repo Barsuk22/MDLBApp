@@ -68,6 +68,29 @@ class IncomingCallService : Service() {
         val fromName = intent?.getStringExtra("fromName") ?: "Мамочка"
         val fromUid  = intent?.getStringExtra("fromUid")  ?: ""
 
+        serviceScope.launch {
+            val me = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+                ?: return@launch
+            val db = com.google.firebase.ktx.Firebase.firestore
+            // найдём tid нашей пары (у тебя уже есть findTidWith — можно использовать его)
+            val tid = findTidWith(fromUid, me) ?: return@launch
+
+            // берём самый свежий RINGING, адресованный нам
+            val fresh = db.collection("chats").document(tid).collection("calls")
+                .whereEqualTo("callerUid", fromUid)
+                .whereEqualTo("calleeUid", me)
+                .whereEqualTo("state", "ringing")
+                .limit(1)
+                .get().await()
+                .documents.firstOrNull()
+
+            // если ничего не нашли (звонящий уже успел завершить) — тихо выходим, ничего не показываем
+            if (fresh == null) {
+                stopSelf()
+                return@launch
+            }
+        }
+
         // ACTIONS из уведомления
         when (intent?.action) {
             ACTION_SILENCE -> {
