@@ -65,6 +65,12 @@ class OutgoingCallActivity : ComponentActivity() {
         val initialAvatar = intent.getStringExtra("peerAvatar")
 
         val resumeFromNotif = intent.getBooleanExtra("resume", false)
+        if (!resumeFromNotif && com.app.mdlbapp.data.call.CallRuntime.callId != null) {
+            android.widget.Toast.makeText(this, "У тебя уже идёт звонок", android.widget.Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+
         val runtimeRtc = com.app.mdlbapp.data.call.CallRuntime.rtc
         val runtimeCallId = com.app.mdlbapp.data.call.CallRuntime.callId
 

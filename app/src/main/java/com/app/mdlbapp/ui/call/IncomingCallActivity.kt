@@ -275,11 +275,16 @@ class IncomingCallActivity : ComponentActivity() {
                                 Intent(this@IncomingCallActivity, com.app.mdlbapp.data.call.CallOngoingService::class.java)
                                     .setAction(com.app.mdlbapp.data.call.CallOngoingService.ACTION_CONNECTED)
                             )
-                            com.app.mdlbapp.data.call.CallRuntime.rtc = rtc
-                            com.app.mdlbapp.data.call.CallRuntime.tid = tid
-                            com.app.mdlbapp.data.call.CallRuntime.callId = callId
-                            com.app.mdlbapp.data.call.CallRuntime.peerUid = from
-                            com.app.mdlbapp.data.call.CallRuntime.peerName = name
+                            CallRuntime.rtc = rtc
+                            CallRuntime.tid = tid
+                            CallRuntime.callId = callId
+                            CallRuntime.peerUid = from
+                            CallRuntime.peerName = name
+                            CallRuntime.asCaller = false
+
+                            CallRuntime.callIdFlow.value    = callId
+                            CallRuntime.asCallerFlow.value  = false
+                            CallRuntime.sessionActive.value = true
                         }
                         phase = if (CallRuntime.connected.value) CallPhase.Connected else CallPhase.Connecting
                     }

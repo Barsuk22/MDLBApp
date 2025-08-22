@@ -77,13 +77,15 @@ class CallOngoingService : Service() {
                 // 🔁 Новый звонок? — мягко сбросим только таймер, если ещё не подключены
                 val isNewCall = (oldTid != CallRuntime.tid) || (oldCid != CallRuntime.callId)
                 if (isNewCall) {
-                    if (!CallRuntime.connected.value) {
-                        CallRuntime.callStartedAtUptimeMs = null
-                    }
-                    // ВАЖНО: не трогаем connected.value — вдруг ACTION_CONNECTED уже пришёл
+                    CallRuntime.callStartedAtUptimeMs = null
+                    CallRuntime.connected.value = false
                 }
+                CallRuntime.callIdFlow.value   = CallRuntime.callId
+                CallRuntime.asCallerFlow.value = CallRuntime.asCaller
+                CallRuntime.sessionActive.value = true
 
                 startForegroundCompat(buildNotification())
+
                 callReg?.remove()
                 val t = CallRuntime.tid
                 val c = CallRuntime.callId
@@ -102,14 +104,19 @@ class CallOngoingService : Service() {
                                             runCatching { CallRuntime.rtc?.endCall() }
                                             CallRuntime.rtc = null
                                             CallRuntime.connected.value = false
+
+                                            // 🧹 ПОЛНЫЙ СБРОС + реактивные флоу
                                             CallRuntime.callStartedAtUptimeMs = null
                                             CallRuntime.tid = null
                                             CallRuntime.callId = null
                                             CallRuntime.peerUid = null
                                             CallRuntime.peerName = null
                                             CallRuntime.asCaller = null
-                                            stopForeground(true)
-                                            stopSelf()
+                                            CallRuntime.callIdFlow.value    = null
+                                            CallRuntime.asCallerFlow.value  = null
+                                            CallRuntime.sessionActive.value = false
+
+                                            stopForeground(true); stopSelf()
                                         }
                                     }
                                 }
@@ -131,7 +138,6 @@ class CallOngoingService : Service() {
                     CallRuntime.callStartedAtUptimeMs = android.os.SystemClock.elapsedRealtime()
                 }
                 CallRuntime.connected.value = true
-
                 updateNotification()
             }
 
@@ -160,16 +166,19 @@ class CallOngoingService : Service() {
                         runCatching { CallRuntime.rtc?.endCall() }
                         CallRuntime.rtc = null
                         CallRuntime.connected.value = false
-                        // 🧹 Полный сброс
+
+                        // 🧹 ПОЛНЫЙ СБРОС + реактивные флоу
                         CallRuntime.callStartedAtUptimeMs = null
                         CallRuntime.tid = null
                         CallRuntime.callId = null
                         CallRuntime.peerUid = null
                         CallRuntime.peerName = null
                         CallRuntime.asCaller = null
+                        CallRuntime.callIdFlow.value    = null
+                        CallRuntime.asCallerFlow.value  = null
+                        CallRuntime.sessionActive.value = false
 
-                        stopForeground(true)
-                        stopSelf()
+                        stopForeground(true); stopSelf()
                     }
                 }
             }

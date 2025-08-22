@@ -14,5 +14,9 @@ object CallRuntime {
     @Volatile var callStartedAtUptimeMs: Long? = null
     // сервис следит за состоянием и обновляет уведомление
     val connected = MutableStateFlow(false)
+    val sessionActive = MutableStateFlow(false)          // идёт ли вообще сессия (ringing/connecting/connected)
+    val callIdFlow    = MutableStateFlow<String?>(null)  // для реактивных подписок в UI
+    val asCallerFlow  = MutableStateFlow<Boolean?>(null) // кто мы в текущей сессии
+
     @Volatile var asCaller: Boolean? = null
 }

@@ -136,6 +136,9 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import kotlin.math.max
 import android.provider.Settings
+import com.app.mdlbapp.data.call.CallOngoingService
+import com.app.mdlbapp.ui.call.IncomingCallActivity
+import com.app.mdlbapp.ui.call.OutgoingCallActivity
 
 // ——— моделька поиска ———
 data class Hit(val msgIndex: Int, val range: IntRange)
@@ -179,6 +182,83 @@ fun BabyChatScreen(nav: NavHostController) {
 // ┌───────────────────────────────────────────────────────────────────┐
 // │                            ЭКРАН ЧАТА                             │
 /* └───────────────────────────────────────────────────────────────────┘ */
+@Composable
+private fun SmartCallButton(
+    mommyUid: String,
+    babyUid: String,
+    peerName: String?,
+    peerPhoto: String?
+) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+
+    val connected  by com.app.mdlbapp.data.call.CallRuntime.connected.collectAsState()
+    val inSession  by com.app.mdlbapp.data.call.CallRuntime.sessionActive.collectAsState()
+    val isConnecting = inSession && !connected
+
+    val tint = when {
+        connected     -> Color(0xFF2ECC71) // зелёная
+        isConnecting  -> Color(0xFFFFD600) // жёлтая
+        else          -> Color(0xFF444444) // тёмно-серая
+    }
+
+    var ask by remember { mutableStateOf(false) }
+
+    IconButton(onClick = {
+        if (inSession) {
+            ask = true
+        } else {
+            // 🧷 микроподстраховка: подсветить кнопку в "connecting" мгновенно
+            com.app.mdlbapp.data.call.CallRuntime.connected.value      = false
+            com.app.mdlbapp.data.call.CallRuntime.callIdFlow.value     = null
+            com.app.mdlbapp.data.call.CallRuntime.asCallerFlow.value   = true
+            com.app.mdlbapp.data.call.CallRuntime.sessionActive.value  = true
+
+            val me = FirebaseAuth.getInstance().currentUser?.uid
+            val peerUid = if (me == mommyUid) babyUid else mommyUid
+            ctx.startActivity(Intent(ctx, OutgoingCallActivity::class.java).apply {
+                putExtra("tid", "${mommyUid}_${babyUid}")
+                putExtra("peerUid", peerUid)
+                putExtra("peerName", peerName)
+                putExtra("peerAvatar", peerPhoto)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+            })
+        }
+    }) {
+        Icon(Icons.Filled.Call, contentDescription = "Звонок", tint = tint)
+    }
+
+    if (ask) {
+        AlertDialog(
+            onDismissRequest = { ask = false },
+            title = { Text("Идёт звонок") },
+            text  = { Text("Продолжим разговор или повесим трубочку?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    ask = false
+                    val asCaller = com.app.mdlbapp.data.call.CallRuntime.asCallerFlow.value == true
+                    val target = if (asCaller) OutgoingCallActivity::class.java
+                    else IncomingCallActivity::class.java
+                    ctx.startActivity(Intent(ctx, target).apply {
+                        putExtra("resume", true)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+                    })
+                }) { Text("Продолжить") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    ask = false
+                    ctx.startService(Intent(ctx, CallOngoingService::class.java)
+                        .setAction(CallOngoingService.ACTION_HANGUP))
+                }) { Text("Завершить") }
+            }
+        )
+    }
+}
+
 
 @Composable
 private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String) {
@@ -270,8 +350,6 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
 
 
     // — ДАННЫЕ ЧАТА
-
-
     var forwarding by remember { mutableStateOf<List<ForwardPayload>>(emptyList()) }
     var editing by remember { mutableStateOf<ChatMessage?>(null) }
     var flashHighlightedId by remember { mutableStateOf<String?>(null) }
@@ -934,28 +1012,12 @@ private fun ChatScreen(nav: NavHostController, mommyUid: String, babyUid: String
                         }
                     },
                     actions = {
-                        val ctx = androidx.compose.ui.platform.LocalContext.current
-
-                        IconButton(onClick = {
-                            val me  = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
-                            val peerUid = if (me == mommyUid) babyUid else mommyUid
-
-                            ctx.startActivity(
-                                android.content.Intent(ctx, com.app.mdlbapp.ui.call.OutgoingCallActivity::class.java).apply {
-                                    putExtra("tid", "${mommyUid}_${babyUid}")
-                                    putExtra("peerUid", peerUid)
-                                    putExtra("peerName", peerName)
-                                    putExtra("peerAvatar", peerPhoto)
-                                    addFlags(
-                                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                                                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                                                android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
-                                    )
-                                }
-                            )
-                        }) {
-                            Icon(Icons.Filled.Call, contentDescription = "Звонок")
-                        }
+                        SmartCallButton(
+                            mommyUid = mommyUid,
+                            babyUid = babyUid,
+                            peerName = peerName,
+                            peerPhoto = peerPhoto
+                        )
 
                         Box {
                             IconButton(onClick = { menuOpen = true }) {
