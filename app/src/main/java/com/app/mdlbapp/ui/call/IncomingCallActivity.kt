@@ -320,7 +320,38 @@ class IncomingCallActivity : ComponentActivity() {
                         },
                         onToggleSpk = { spkOn = !spkOn },
                         onAccept = acceptCall,
-                        onDecline = { /* твоя логика */ },
+                        onDecline = {
+                            val act = this@IncomingCallActivity
+                            act.lifecycleScope.launch {
+                                // На всякий: заглушим входящий сервис/звук и погасим fallback-увед.
+                                runCatching {
+                                    act.startService(
+                                        Intent(act, com.app.mdlbapp.data.call.IncomingCallService::class.java)
+                                            .setAction("com.app.mdlbapp.ACTION_DISMISS")
+                                    )
+                                    androidx.core.app.NotificationManagerCompat.from(act).cancel(42)
+                                }
+
+                                if (phase != CallPhase.Connected) {
+                                    // 📵 СБРОС ДО СОЕДИНЕНИЯ
+                                    runCatching { endLatestRingingForMe(callerUid) }    // ← готовая утилита в этом файле
+                                    if (android.os.Build.VERSION.SDK_INT >= 21) act.finishAndRemoveTask() else act.finish()
+                                    return@launch
+                                }
+
+                                // ⛔ ЗАВЕРШЕНИЕ В СОЕДИНЕНИИ
+                                // Отдадим это фон-сервису «идёт звонок», он красиво всё выключит и поставит state=ended.
+                                act.startService(
+                                    Intent(act, com.app.mdlbapp.data.call.CallOngoingService::class.java)
+                                        .setAction(com.app.mdlbapp.data.call.CallOngoingService.ACTION_HANGUP)
+                                )
+
+                                // Локально тоже прибираемся (мягкая подстраховка)
+                                runCatching { rtc?.endCall() }
+                                rtc = null
+                                if (android.os.Build.VERSION.SDK_INT >= 21) act.finishAndRemoveTask() else act.finish()
+                            }
+                        },
                         drawBg = !showRemote,     // зелёненький фон до появления кадра
                         showHeader = !showRemote,
                         showControls = !showCamPreview

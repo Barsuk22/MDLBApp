@@ -84,6 +84,7 @@ class CallOngoingService : Service() {
                     CallRuntime.callStartedAtUptimeMs = android.os.SystemClock.elapsedRealtime()
                 }
                 CallRuntime.connected.value = true
+
                 updateNotification()
             }
 
@@ -96,6 +97,18 @@ class CallOngoingService : Service() {
                             CallRepository.setState(t, c, "ended")
                         }
                     }
+                    val asCaller = CallRuntime.asCaller == true
+                    val notConnectedYet = !CallRuntime.connected.value
+                    val peer = CallRuntime.peerUid
+                    val me = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+                    if (asCaller && notConnectedYet && !peer.isNullOrBlank() && !me.isNullOrBlank()) {
+                        notifyCancelViaAppsScript(
+                            com.app.mdlbapp.data.call.PushConfig.WEBHOOK_URL,
+                            peer, me,
+                            com.app.mdlbapp.data.call.PushConfig.WEBHOOK_SECRET
+                        )
+                    }
+
                     withContext(Dispatchers.Main) {
                         runCatching { CallRuntime.rtc?.endCall() }
                         CallRuntime.rtc = null

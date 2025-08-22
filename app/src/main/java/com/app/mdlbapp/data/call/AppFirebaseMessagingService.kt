@@ -28,20 +28,37 @@ import com.google.firebase.messaging.RemoteMessage
 class AppFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
-        if (message.data["type"] == "call") {
-            val name = message.data["fromName"] ?: "Мамочка"
-            val uid  = message.data["fromUid"]  ?: ""
-            val i = Intent(this, IncomingCallService::class.java)
-                .putExtra("fromName", name)
-                .putExtra("fromUid",  uid)
+        when (message.data["type"]) {
+            "call" -> {
+                val name = message.data["fromName"] ?: "Мамочка"
+                val uid = message.data["fromUid"] ?: ""
+                val i = Intent(this, IncomingCallService::class.java)
+                    .putExtra("fromName", name)
+                    .putExtra("fromUid", uid)
 
-            try {
-                ContextCompat.startForegroundService(this, i)
-            } catch (e: Exception) {
-                Log.e("FCM","startForegroundService failed: ${e::class.java.simpleName}: ${e.message}")
-                showIncomingCallNotification(name, uid) // фолбэк в тот же канал
+                try {
+                    ContextCompat.startForegroundService(this, i)
+                } catch (e: Exception) {
+                    Log.e(
+                        "FCM",
+                        "startForegroundService failed: ${e::class.java.simpleName}: ${e.message}"
+                    )
+                    showIncomingCallNotification(name, uid) // фолбэк в тот же канал
+                }
+                Log.d("FCM", "got ${message.data}")
             }
-            Log.d("FCM","got ${message.data}")
+            "call_cancel" -> {
+                // 1) убрать входящее уведе (фолбэк-вариант)
+                try { NotificationManagerCompat.from(this).cancel(42) } catch (_: Throwable) {}
+
+                // 2) если вдруг входящий сервис крутится — попросим его корректно закрыться
+                try {
+                    val i = Intent(this, IncomingCallService::class.java)
+                        .setAction("com.app.mdlbapp.ACTION_DISMISS")
+                    startService(i)
+                } catch (_: Exception) { /* молча */ }
+                return
+            }
         }
     }
 

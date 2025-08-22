@@ -55,3 +55,28 @@ suspend fun notifyCallViaAppsScript(
         return // без throw, просто выходим
     }
 }
+
+suspend fun notifyCancelViaAppsScript(
+    webHookUrl: String,
+    calleeUid: String,
+    callerUid: String,
+    hookSecret: String? = null
+) {
+    val tokens = (Firebase.firestore.collection("users").document(calleeUid)
+        .get().await().get("fcmTokens") as? List<*>)?.filterIsInstance<String>().orEmpty()
+    if (tokens.isEmpty()) return
+
+    val payload = JSONObject().apply {
+        put("type", "call_cancel")      // ← отличаемся от call
+        put("tokens", JSONArray(tokens))
+        put("fromUid", callerUid)
+        hookSecret?.takeIf { it.isNotBlank() }?.let { put("secret", it) }
+    }.toString()
+
+    val req = Request.Builder()
+        .url(webHookUrl)
+        .post(payload.toRequestBody("application/json".toMediaType()))
+        .build()
+
+    OkHttpClient().newCall(req).execute().use { /* лог по желанию */ }
+}
