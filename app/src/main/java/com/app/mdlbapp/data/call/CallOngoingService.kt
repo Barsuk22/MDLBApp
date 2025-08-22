@@ -67,11 +67,13 @@ class CallOngoingService : Service() {
                 intent.getStringExtra(EXTRA_CALL_ID)?.let { CallRuntime.callId = it }
                 CallRuntime.asCaller = intent.getBooleanExtra(EXTRA_AS_CALLER, CallRuntime.asCaller ?: false)
 
-                // 🔁 Новый звонок? — сбросить таймер/флаги
+                // 🔁 Новый звонок? — мягко сбросим только таймер, если ещё не подключены
                 val isNewCall = (oldTid != CallRuntime.tid) || (oldCid != CallRuntime.callId)
                 if (isNewCall) {
-                    CallRuntime.callStartedAtUptimeMs = null
-                    CallRuntime.connected.value = false
+                    if (!CallRuntime.connected.value) {
+                        CallRuntime.callStartedAtUptimeMs = null
+                    }
+                    // ВАЖНО: не трогаем connected.value — вдруг ACTION_CONNECTED уже пришёл
                 }
 
                 startForegroundCompat(buildNotification())
