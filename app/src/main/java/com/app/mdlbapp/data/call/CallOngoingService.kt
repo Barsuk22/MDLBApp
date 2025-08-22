@@ -11,6 +11,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.app.mdlbapp.R
 import com.app.mdlbapp.MainActivity // или твой экран звонка-роутер
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 class CallOngoingService : Service() {
@@ -60,6 +62,32 @@ class CallOngoingService : Service() {
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
+    }
+
+    private suspend fun endLatestIfUnknownId() {
+        val me   = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val peer = com.app.mdlbapp.data.call.CallRuntime.peerUid ?: return
+
+        // найдём tid на всякий случай
+        val db = Firebase.firestore
+        val q1 = db.collection("chats").whereEqualTo("mommyUid", me)
+            .whereEqualTo("babyUid", peer).limit(1).get().await()
+        val q2 = db.collection("chats").whereEqualTo("mommyUid", peer)
+            .whereEqualTo("babyUid", me).limit(1).get().await()
+        val tid = (q1.documents.firstOrNull() ?: q2.documents.firstOrNull())?.id ?: return
+
+        // мы могли быть и звонящим, и принимающим — берём обе стороны
+        val docs = db.collection("chats").document(tid).collection("calls")
+            .whereIn("state", listOf("ringing","connected"))
+            .get().await().documents
+            .filter {
+                val a = it.getString("callerUid"); val b = it.getString("calleeUid")
+                (a == me && b == peer) || (a == peer && b == me)
+            }
+
+        val fresh = docs.maxByOrNull { it.getTimestamp("createdAt")?.toDate()?.time ?: 0L } ?: return
+        db.collection("chats").document(tid).collection("calls").document(fresh.id)
+            .update("state", "ended").await()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -148,6 +176,8 @@ class CallOngoingService : Service() {
                         val c = CallRuntime.callId
                         if (!t.isNullOrBlank() && !c.isNullOrBlank()) {
                             CallRepository.setState(t, c, "ended")
+                        }else{
+                            endLatestIfUnknownId()
                         }
                     }
                     val asCaller = CallRuntime.asCaller == true

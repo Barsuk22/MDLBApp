@@ -1,6 +1,6 @@
 @file:OptIn(
     androidx.compose.material3.ExperimentalMaterial3Api::class,
-    androidx.compose.foundation.ExperimentalFoundationApi::class
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
 )
 
 package com.app.mdlbapp.ui.chat
@@ -190,6 +190,7 @@ private fun SmartCallButton(
     peerPhoto: String?
 ) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
 
     val connected  by com.app.mdlbapp.data.call.CallRuntime.connected.collectAsState()
     val inSession  by com.app.mdlbapp.data.call.CallRuntime.sessionActive.collectAsState()
@@ -240,19 +241,44 @@ private fun SmartCallButton(
                     val asCaller = com.app.mdlbapp.data.call.CallRuntime.asCallerFlow.value == true
                     val target = if (asCaller) OutgoingCallActivity::class.java
                     else IncomingCallActivity::class.java
+
+                    // берём из рантайма что есть, иначе собираем tid из пары
+                    val t = com.app.mdlbapp.data.call.CallRuntime.tid ?: "${mommyUid}_${babyUid}"
+                    val me = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+                    val pUid = com.app.mdlbapp.data.call.CallRuntime.peerUid
+                        ?: if (me == mommyUid) babyUid else mommyUid
+
+                    val pName   = com.app.mdlbapp.data.call.CallRuntime.peerName ?: peerName
+                    val pAvatar = peerPhoto
+
                     ctx.startActivity(Intent(ctx, target).apply {
                         putExtra("resume", true)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
-                                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+                        putExtra("tid", t)
+                        putExtra("peerUid", pUid)
+                        putExtra("peerName", pName)
+                        putExtra("peerAvatar", pAvatar)
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        )
                     })
                 }) { Text("Продолжить") }
             },
             dismissButton = {
                 TextButton(onClick = {
                     ask = false
-                    ctx.startService(Intent(ctx, CallOngoingService::class.java)
-                        .setAction(CallOngoingService.ACTION_HANGUP))
+                    scope.launch {
+                        val t = com.app.mdlbapp.data.call.CallRuntime.tid
+                        val c = com.app.mdlbapp.data.call.CallRuntime.callId
+                        if (!t.isNullOrBlank() && !c.isNullOrBlank()) {
+                            runCatching { com.app.mdlbapp.data.call.CallRepository.setState(t, c, "ended") }
+                        }
+                    }
+                    ctx.startService(
+                        Intent(ctx, com.app.mdlbapp.data.call.CallOngoingService::class.java)
+                            .setAction(com.app.mdlbapp.data.call.CallOngoingService.ACTION_HANGUP)
+                    )
                 }) { Text("Завершить") }
             }
         )
