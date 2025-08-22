@@ -11,6 +11,9 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.app.mdlbapp.R
 import com.app.mdlbapp.MainActivity // или твой экран звонка-роутер
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,10 +22,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class CallOngoingService : Service() {
+    private var callReg: ListenerRegistration? = null
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onDestroy() {
         super.onDestroy()
+        callReg?.remove()
+        callReg = null
         serviceScope.cancel()
     }
 
@@ -77,6 +84,46 @@ class CallOngoingService : Service() {
                 }
 
                 startForegroundCompat(buildNotification())
+                callReg?.remove()
+                val t = CallRuntime.tid
+                val c = CallRuntime.callId
+
+                if (!t.isNullOrBlank() && !c.isNullOrBlank()) {
+                    callReg = Firebase.firestore
+                        .collection("chats").document(t)
+                        .collection("calls").document(c)
+                        .addSnapshotListener { snap, _ ->
+                            val state = snap?.getString("state")
+                            when (state) {
+                                "ended" -> {
+                                    // нежно завершим как в ACTION_HANGUP, но без повторной записи state
+                                    serviceScope.launch {
+                                        withContext(Dispatchers.Main) {
+                                            runCatching { CallRuntime.rtc?.endCall() }
+                                            CallRuntime.rtc = null
+                                            CallRuntime.connected.value = false
+                                            CallRuntime.callStartedAtUptimeMs = null
+                                            CallRuntime.tid = null
+                                            CallRuntime.callId = null
+                                            CallRuntime.peerUid = null
+                                            CallRuntime.peerName = null
+                                            CallRuntime.asCaller = null
+                                            stopForeground(true)
+                                            stopSelf()
+                                        }
+                                    }
+                                }
+                                "connected" -> {
+                                    // если внезапно подключились — обновим текст уведомления
+                                    if (CallRuntime.callStartedAtUptimeMs == null) {
+                                        CallRuntime.callStartedAtUptimeMs = android.os.SystemClock.elapsedRealtime()
+                                    }
+                                    CallRuntime.connected.value = true
+                                    updateNotification()
+                                }
+                            }
+                        }
+                }
             }
 
             ACTION_CONNECTED -> {

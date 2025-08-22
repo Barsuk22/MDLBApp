@@ -220,7 +220,12 @@ class OutgoingCallActivity : ComponentActivity() {
                                         c == null -> {}
                                         c.state == "ended" -> {
                                             CallSounds.playHangupBeep(this)
-                                            rtc?.endCall(); finish()
+                                            startService(
+                                                Intent(this@OutgoingCallActivity, CallOngoingService::class.java)
+                                                    .setAction(CallOngoingService.ACTION_HANGUP)
+                                            )
+                                            rtc?.endCall()
+                                            finish()
                                         }
                                         c.answer != null -> {
                                             CallSounds.stopRingback()

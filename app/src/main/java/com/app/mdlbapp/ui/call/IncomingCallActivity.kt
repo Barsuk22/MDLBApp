@@ -231,6 +231,10 @@ class IncomingCallActivity : ComponentActivity() {
                                         CallSounds.playHangupBeep(this)
                                         watchJob?.cancel()
                                         rtc?.endCall(); rtc = null
+                                        startService(
+                                            Intent(this@IncomingCallActivity, com.app.mdlbapp.data.call.CallOngoingService::class.java)
+                                                .setAction(com.app.mdlbapp.data.call.CallOngoingService.ACTION_HANGUP)
+                                        )
                                         if (Build.VERSION.SDK_INT >= 21) act.finishAndRemoveTask() else act.finish()
                                     }
                                 }
