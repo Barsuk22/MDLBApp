@@ -137,7 +137,7 @@
         <service
             android:name=".data.call.IncomingCallService"
             android:exported="false"
-            android:foregroundServiceType="phoneCall" />
+            android:foregroundServiceType="phoneCall|camera|microphone" />
     </application>
 
 </manifest>

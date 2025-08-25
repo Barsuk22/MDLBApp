@@ -599,15 +599,15 @@
                             }
                         }
                         ExactAlarmPrompt()
-//                        FullscreenIntentPrompt(
-//                            modifier = Modifier
-//                                .fillMaxWidth()
-//                                .padding(horizontal = 16.dp, vertical = 12.dp)
-//                        )
+                        FullscreenIntentPrompt(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        )
 
-//                        CallPermissionsShortcuts(
-//                            modifier = Modifier.fillMaxWidth()
-//                        )
+                        CallPermissionsShortcuts(
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         AutoCallReadinessWindows()
                     }
                 }

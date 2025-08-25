@@ -70,6 +70,9 @@ class IncomingCallActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
 
+        // мягко разбудим экран на 5 секунд
+        com.app.mdlbapp.data.call.WakeHelper.pokeScreen(this)
+
         val initialName   = intent.getStringExtra("fromName") ?: "Мамочка"
         val initialAvatar = intent.getStringExtra("fromAvatar")
         val callerUid     = intent.getStringExtra("callerUid")
